@@ -54,7 +54,7 @@ class Waveform(object):
             self.chi = np.sqrt(2) / self.freq
             self.zeta = np.pi**2 * self.freq**2
 
-    def calculate_value(self, time, dt):
+    def calculate_value(self, time, dt, cylindrical):
         """Calculates value of the waveform at a specific time.
 
         Args:
@@ -71,6 +71,10 @@ class Waveform(object):
         if self.type == 'gaussian':
             delay = time - self.chi
             ampvalue = np.exp(-self.zeta * delay**2)
+            #if cylindrical:
+                #ampvalue *= np.exp(- 1j * 2 * np.pi * self.freq * time)
+            #else:
+                #ampvalue *= np.cos(2 * np.pi * self.freq * time)
 
         elif self.type == 'gaussiandot' or self.type == 'gaussianprime':
             delay = time - self.chi

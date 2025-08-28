@@ -1,0 +1,36 @@
+input_cmds_file:
+	Ajout de 'cylindrical', 'dr_dz', 'm', 'domain_cyl' aux liste singleusecmds et geometrycmds
+	Ajout d'une liste 'essentialcmds_cyl', d'un compteur et d'une erreur si incomplète
+
+input_cmd_funcs:
+	Ajout des fonctions cylindrical, dr_dz, domain_cyl, m au fichier
+	Ajout de la class Coordinate_cyl
+
+input_cmds_singleuse:
+	Ajout des variables de classe 'cylindrical', 'dr_dz', 'm', 'domain_cyl'
+	Ajout du calcul du dt en cylindrique
+	A ajouter: conditions sur les PMLs
+
+sources:
+	Ajout des coordonnées cylindriques pour le Hertzian dipole et la Electric dipole
+	Ajout d'erreur si cylindrique pour les autres sources
+	Pas de modification du gpu
+
+input_cmds_multiuse:
+	Ajout des cylindriques pour les sources
+	Ajout des cylindriques pour les receivers (sauf les arrays)
+	Materials reste inchangé
+	Voir les dispersions après avoir vérifié le run
+	Voir GeometryView et Snapshots
+
+grid:
+	Ajout des variables de classe nécessaires
+	Modification des fonctions d'initialisation
+	Ajout des cylindriques à memory_estimate_usage
+
+input_cmds_geometry:
+	A faire: modifier les formations de cylindres
+	A faire: Ajouter les conditions pour éviter les cylindriques sur les autres
+
+geometry_primirives_ext:
+	Ajout de la fonction build_cylinder_cyl, construisant une tranche de cylindre

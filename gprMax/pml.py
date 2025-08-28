@@ -162,7 +162,7 @@ class PML(object):
     # xplus, yplus, zplus - absorption increases in positive direction of x-axis, y-axis, or z-axis
     directions = ['xminus', 'yminus', 'zminus', 'xplus', 'yplus', 'zplus']
 
-    def __init__(self, G, ID=None, direction=None, xs=0, xf=0, ys=0, yf=0, zs=0, zf=0):
+    def __init__(self, G, ID=None, direction=None, xs=0, xf=0, ys=0, yf=0, zs=0, zf=0, rs_cyl = 0, rf_cyl = 0, zs_cyl = 0, zf_cyl = 0):
         """
         Args:
             G (class): Grid class instance - holds essential parameters describing the model.
@@ -363,6 +363,287 @@ class PML(object):
 
         self.update_magnetic_gpu(np.int32(self.xs), np.int32(self.xf), np.int32(self.ys), np.int32(self.yf), np.int32(self.zs), np.int32(self.zf), np.int32(self.HPhi1_gpu.shape[1]), np.int32(self.HPhi1_gpu.shape[2]), np.int32(self.HPhi1_gpu.shape[3]), np.int32(self.HPhi2_gpu.shape[1]), np.int32(self.HPhi2_gpu.shape[2]), np.int32(self.HPhi2_gpu.shape[3]), np.int32(self.thickness), G.ID_gpu.gpudata, G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata, G.Hx_gpu.gpudata, G.Hy_gpu.gpudata, G.Hz_gpu.gpudata, self.HPhi1_gpu.gpudata, self.HPhi2_gpu.gpudata, self.HRA_gpu.gpudata, self.HRB_gpu.gpudata, self.HRE_gpu.gpudata, self.HRF_gpu.gpudata, floattype(self.d), block=G.tpb, grid=self.bpg)
 
+class PML_cyl(object):
+
+    boundaryIDs_cyl = ['r', 'z']
+    directions_cyl = ['r', 'z']
+
+    def __init__(self, G, direction = None, rs_cyl = 0, rf_cyl = 0, zs_cyl = 0, zf_cyl = 0):
+        self.sigma_max = np.array([0,0]) #sigma_max[0] = sigma_max_rho, sigma_max[1] = sigma_max_z
+        self.kappa_max = np.array([5,5])
+        self.alpha_max = np.array([0.2,0.2])
+        self.m = 4 #Not the same as G.m_cyl: here, it's the power in alpha, sigma, kappa, b
+
+        self.direction = direction
+
+        self.rs_cyl = rs_cyl
+        self.rf_cyl = rf_cyl
+        self.zs_cyl_upper = zs_cyl
+        self.zf_cyl_lower = zf_cyl
+        self.nr_cyl = rf_cyl - rs_cyl
+        self.nz_cyl = zf_cyl
+
+        assert G.cylindrical, "PML_cyl can only be called when in cylindrical mode"
+        assert self.direction in PML_cyl.directions_cyl, "PML_cyl direction must be one of: " + str(PML_cyl.directions_cyl)
+
+        if self.direction[0] == 'r':
+            self.d_cyl = G.dr_cyl
+            self.thickness = self.nr_cyl
+
+            self.alpha_rho = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.kappa_rho = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.sigma_rho = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.b_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+
+            self.Omega_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.alpha_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.Ksi_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.Lambda_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.R_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.Psi_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+            self.Theta_term_list = np.zeros((self.thickness, 1, G.nz_cyl), floattype)
+
+            self.Ers = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.QErs = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.QEphi = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.Ephi_ = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.XQEphi_ = np.zeros((self.thickness, 1, G.nz_cyl, self.thickness), np.complex128)
+            self.QEz = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.Ezs = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.XQEzs = np.zeros((self.thickness, 1, G.nz_cyl, self.thickness), np.complex128)
+            self.Hrs = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.QHrs = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.QHphi = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.Hphi_ = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.QHphi_ = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.XQHphi_ = np.zeros((self.thickness, 1, G.nz_cyl, self.thickness), np.complex128)
+            self.QHz = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.Hzs = np.zeros((self.thickness, 1, G.nz_cyl), np.complex128)
+            self.XQHzs = np.zeros((self.thickness, 1, G.nz_cyl, self.thickness), np.complex128)
+
+        elif self.direction[0] == 'z':
+            self.d_cyl = G.dz_cyl
+            self.thickness = self.nz_cyl
+
+            self.sigma_z = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+            self.kappa_z = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+            self.alpha_z = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+
+            self.Pi_term_list = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+            self.Delta_term_list = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+            self.Rho_term_list = np.zeros((self.rs_cyl, 1, 2 * self.thickness), floattype)
+
+            self.JEphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.JEr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QEphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QEr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QJEphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QJEr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+
+            self.JHphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.JHr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QHphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QHr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QJHphi = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+            self.QJHr = np.zeros((self.rs_cyl, 1, 2 * self.thickness), np.complex128)
+
+    def calculate_sigma_max_cyl(self, G):
+
+        self.sigma_max[0] = (self.m + 1) / (150 * np.pi * G.dr_cyl)
+        self.sigma_max[1] = (self.m + 1) / (150 * np.pi * G.dz_cyl)
+
+    def update_sigma_cyl(self, G):
+        if self.direction[0] == 'z':
+            #Lower slab
+            for k in range(self.thickness):
+                value = self.sigma_max[1] * ((self.zf_cyl_lower - self.thickness - k)/self.thickness)**self.m
+                for j in range(self.rs_cyl):
+                    self.sigma_z[j,0,k] = value
+            #Upper slab
+            for k in range(self.thickness):
+                value = self.sigma_max[1] * (k/self.thickness)**self.m
+                for j in range(self.rs_cyl):
+                    self.sigma_z[j,0,k + self.thickness] = value
+        elif self.direction[0] == 'r':
+            for j in range(0,self.thickness):
+                value = self.sigma_max[0] * (j/self.thickness)**self.m
+                for k in range(G.nz_cyl):
+                    self.sigma_rho[j,0,k] = value
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported")
+
+    def update_kappa_cyl(self, G):
+        kappa_mod = self.kappa_max - 1
+        if self.direction[0] == 'z':
+            #Lower slab
+            for k in range(self.thickness):
+                value = (1 + kappa_mod[1] * (self.zf_cyl_lower - self.thickness - k)**self.m)/(self.thickness**self.m)
+                for j in range(self.rs_cyl):
+                    self.kappa_z[j,0,k] = value
+            #Upper slab
+            for k in range(self.thickness):
+                value = (1 + kappa_mod[1] * k**self.m)/(self.thickness**self.m)
+                for j in range(self.rs_cyl):
+                    self.kappa_z[j,0,k + self.thickness] = value
+        elif self.direction[0] == 'r':
+            for j in range(0,self.thickness):
+                value = (1 + kappa_mod[0] * j**self.m)/self.thickness**self.m
+                for k in range(G.nz_cyl):
+                    self.kappa_rho[j,0,k] = value
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported")
+
+    def update_alpha_cyl(self, G):
+        if self.direction[0] == 'z':
+            #Lower slab
+            for k in range(1,self.thickness+1):
+                value = self.alpha_max[1] * (1 - (self.zf_cyl_lower - self.thickness - k)/self.thickness)
+                if value == 0:
+                    raise GeneralError("Alpha cannot be zero in PML")
+                for j in range(self.rs_cyl):
+                    self.alpha_z[j,0,k] = value
+            #Upper slab
+            for k in range(1,self.thickness+1):
+                value = self.alpha_max[1] * (1 - k/self.thickness)
+                for j in range(self.rs_cyl):
+                    self.alpha_z[j,0,k + self.thickness] = value
+        elif self.direction[0] == 'r':
+            for j in range(0,self.thickness):
+                value = self.alpha_max[0] * (1 - j/self.thickness)
+                for k in range(G.nz_cyl):
+                    self.alpha_rho[j,0,k] = value
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported")
+
+    def update_b_list(self, G):
+        if self.direction[0] == 'z':
+            return # No b_list in cylindrical PML in z direction
+        
+        elif self.direction[0] == 'r':
+            for j in range(0,self.thickness):
+                value = (j+self.rs_cyl) * G.dr_cyl + (self.kappa_max[0] - 1) / (self.m+1) * (j/self.thickness) ** (self.m+1)
+                for k in range(G.nz_cyl):
+                    self.b_list[j,0,k] = value
+            print("b_list updated for cylindrical PML in r direction:", self.b_list)
+        
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported for cylindrical PML")
+
+    def update_term_list(self, G):
+        if self.direction[0] == 'z':
+            #Both slabs are processed by the same funciton at the same time
+            pmlmodule = 'gprMax.pml_updates.pml_updates_CYLINDRICAL_ext'
+            func = getattr(import_module(pmlmodule), 'initialize_constant_lists_z')
+            func(self.rs_cyl, self.thickness, G.dt, G.nthreads, self.alpha_z, self.sigma_z, self.kappa_z, self.Pi_term_list, self.Delta_term_list, self.Rho_term_list)
+        elif self.direction[0] == 'r':
+            #idem
+            pmlmodule = 'gprMax.pml_updates.pml_updates_CYLINDRICAL_ext'
+            func = getattr(import_module(pmlmodule), 'initialize_constant_lists_rho')
+            func(self.rs_cyl, self.rf_cyl, self.nz_cyl, self.thickness, G.dr_cyl, G.dt, G.nthreads, self.sigma_rho,
+                 self.alpha_rho, self.kappa_rho, self.Omega_term_list, self.Ksi_term_list, self.Lambda_term_list, self.Psi_term_list,
+                 self.Theta_term_list, self.alpha_term_list, self.R_term_list)
+
+    def update_electric(self, G):
+        """This functions updates electric field components with the PML correction.
+
+        Args:
+            G (class): Grid class instance - holds essential parameters describing the model.
+        """
+
+        pmlmodule = 'gprMax.pml_updates.pml_updates_CYLINDRICAL_ext'
+        if self.direction[0] == 'r':
+            func = getattr(import_module(pmlmodule), 'E_update_r_slab')
+            func(self.rs_cyl, 
+                 self.m, 
+                 G.nz_cyl, 
+                 self.thickness, 
+                 G.dr_cyl, 
+                 G.dz_cyl, 
+                 G.dt, 
+                 G.nthreads, 
+                 G.ID, 
+                 G.Er_cyl, 
+                 self.Ers, 
+                self.QErs,
+                 G.Ephi_cyl, 
+                 self.QEphi, 
+                 self.Ephi_, 
+                 self.XQEphi_, 
+                 G.Ez_cyl, 
+                 self.QEz, 
+                 self.Ezs, 
+                 self.XQEzs,
+                 G.Hr_cyl, 
+                self.Hrs, 
+                self.QHrs, 
+                G.Hphi_cyl, 
+                self.QHphi, 
+                self.Hphi_, 
+                self.QHphi_, 
+                self.XQHphi_, 
+                G.Hz_cyl, 
+                self.QHz, 
+                self.Hzs, 
+                self.XQHzs, 
+                self.alpha_rho, 
+                self.sigma_rho, 
+                self.kappa_rho, 
+                self.b_list, 
+                self.Omega_term_list, 
+                self.alpha_term_list, 
+                self.Ksi_term_list, 
+                self.Lambda_term_list, 
+                self.R_term_list, 
+                self.Psi_term_list, 
+                self.Theta_term_list)
+        elif self.direction[0] == 'z':
+            func = getattr(import_module(pmlmodule), 'E_update_upper_slab')
+            func(self.rs_cyl, self.zs_cyl_upper, self.thickness, G.dr_cyl, G.dz_cyl, G.dt, self.m, G.nthreads, G.Er_cyl,
+                  G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl, self.JEphi, self.JEr, self.QEphi,
+                 self.QEr, self.QJEphi, self.QJEr, self.Pi_term_list, self.Delta_term_list, self.Rho_term_list)
+            
+            func = getattr(import_module(pmlmodule), 'E_update_lower_slab')
+            func(self.rs_cyl, self.zf_cyl_lower, self.thickness, G.dr_cyl, G.dz_cyl, G.dt, self.m, G.nthreads, G.Er_cyl,
+                 G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl, self.JEphi, self.JEr, self.QEphi,
+                 self.QEr, self.QJEphi, self.QJEr, self.Pi_term_list, self.Delta_term_list, self.Rho_term_list)
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported for cylindrical PML")
+            
+
+    def update_magnetic(self, G):
+        """This functions updates magnetic field components with the PML correction.
+
+        Args:
+            G (class): Grid class instance - holds essential parameters describing the model.
+        """
+
+        pmlmodule = 'gprMax.pml_updates.pml_updates_CYLINDRICAL_ext'
+        if self.direction[0] == 'r':
+            func = getattr(import_module(pmlmodule), 'H_update_r_slab')
+            func(self.rs_cyl, self.m, G.nz_cyl, self.thickness, G.dr_cyl, G.dz_cyl, G.dt, G.nthreads, G.ID, G.Er_cyl, self.Ers, 
+                self.QErs, G.Ephi_cyl, self.QEphi, self.Ephi_, self.XQEphi_, G.Ez_cyl, self.QEz, self.Ezs, self.XQEzs, G.Hr_cyl, 
+                self.Hrs, self.QHrs, G.Hphi_cyl, self.QHphi, self.Hphi_, self.QHphi_, self.XQHphi_, G.Hz_cyl, self.QHz, self.Hzs, 
+                self.XQHzs, self.alpha_rho, self.sigma_rho, self.kappa_rho, self.b_list, self.Omega_term_list, self.alpha_term_list, 
+                self.Ksi_term_list, self.Lambda_term_list, self.R_term_list, self.Psi_term_list, self.Theta_term_list)
+            print("Ne devrait pas être nul: ", self.rs_cyl)
+            #func = getattr(import_module(pmlmodule), 'test')
+        elif self.direction[0] == 'z':
+            func = getattr(import_module(pmlmodule), 'H_update_upper_slab')
+            func(self.rs_cyl, 
+                 self.zs_cyl_upper, self.thickness, G.dr_cyl, G.dz_cyl, G.dt, self.m, G.nthreads, G.Er_cyl,
+                 G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl, self.JHphi, self.JHr, self.QHphi,
+                 self.QHr, self.QJHphi, self.QJHr, self.Pi_term_list, self.Delta_term_list, self.Rho_term_list)
+            
+            func = getattr(import_module(pmlmodule), 'H_update_lower_slab')
+            func(self.rs_cyl, self.zf_cyl_lower, self.thickness, G.dr_cyl, G.dz_cyl, G.dt, self.m, G.nthreads, G.Er_cyl,
+                 G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl, self.JHphi, self.JHr, self.QHphi,
+                 self.QHr, self.QJHphi, self.QJHr, self.Pi_term_list, self.Delta_term_list, self.Rho_term_list)
+        
+            #func = getattr(import_module(pmlmodule), 'test')
+            #func()
+        else:
+            raise GeneralError("Only 'z' and 'r' directions are supported for cylindrical PML")
+
 
 def build_pmls(G, pbar):
     """
@@ -374,56 +655,79 @@ def build_pmls(G, pbar):
         G (class): Grid class instance - holds essential parameters describing the model.
         pbar (class): Progress bar class instance.
     """
+    if not G.cylindrical:
+        for key, value in G.pmlthickness.items():
+            if value > 0:
+                sumer = 0  # Sum of relative permittivities in PML slab
+                summr = 0  # Sum of relative permeabilities in PML slab
 
-    for key, value in G.pmlthickness.items():
-        if value > 0:
-            sumer = 0  # Sum of relative permittivities in PML slab
-            summr = 0  # Sum of relative permeabilities in PML slab
-
-            if key[0] == 'x':
-                if key == 'x0':
-                    pml = PML(G, ID=key, direction='xminus', xf=value, yf=G.ny, zf=G.nz)
-                elif key == 'xmax':
-                    pml = PML(G, ID=key, direction='xplus', xs=G.nx - value, xf=G.nx, yf=G.ny, zf=G.nz)
-                G.pmls.append(pml)
-                for j in range(G.ny):
-                    for k in range(G.nz):
-                        numID = G.solid[pml.xs, j, k]
-                        material = next(x for x in G.materials if x.numID == numID)
-                        sumer += material.er
-                        summr += material.mr
-                averageer = sumer / (G.ny * G.nz)
-                averagemr = summr / (G.ny * G.nz)
-
-            elif key[0] == 'y':
-                if key == 'y0':
-                    pml = PML(G, ID=key, direction='yminus', yf=value, xf=G.nx, zf=G.nz)
-                elif key == 'ymax':
-                    pml = PML(G, ID=key, direction='yplus', ys=G.ny - value, xf=G.nx, yf=G.ny, zf=G.nz)
-                G.pmls.append(pml)
-                for i in range(G.nx):
-                    for k in range(G.nz):
-                        numID = G.solid[i, pml.ys, k]
-                        material = next(x for x in G.materials if x.numID == numID)
-                        sumer += material.er
-                        summr += material.mr
-                averageer = sumer / (G.nx * G.nz)
-                averagemr = summr / (G.nx * G.nz)
-
-            elif key[0] == 'z':
-                if key == 'z0':
-                    pml = PML(G, ID=key, direction='zminus', zf=value, xf=G.nx, yf=G.ny)
-                elif key == 'zmax':
-                    pml = PML(G, ID=key, direction='zplus', zs=G.nz - value, xf=G.nx, yf=G.ny, zf=G.nz)
-                G.pmls.append(pml)
-                for i in range(G.nx):
+                if key[0] == 'x':
+                    if key == 'x0':
+                        pml = PML(G, ID=key, direction='xminus', xf=value, yf=G.ny, zf=G.nz)
+                    elif key == 'xmax':
+                        pml = PML(G, ID=key, direction='xplus', xs=G.nx - value, xf=G.nx, yf=G.ny, zf=G.nz)
+                    G.pmls.append(pml)
                     for j in range(G.ny):
-                        numID = G.solid[i, j, pml.zs]
-                        material = next(x for x in G.materials if x.numID == numID)
-                        sumer += material.er
-                        summr += material.mr
-                averageer = sumer / (G.nx * G.ny)
-                averagemr = summr / (G.nx * G.ny)
+                        for k in range(G.nz):
+                            numID = G.solid[pml.xs, j, k]
+                            material = next(x for x in G.materials if x.numID == numID)
+                            sumer += material.er
+                            summr += material.mr
+                    averageer = sumer / (G.ny * G.nz)
+                    averagemr = summr / (G.ny * G.nz)
 
-            pml.calculate_update_coeffs(averageer, averagemr, G)
-            pbar.update()
+                elif key[0] == 'y':
+                    if key == 'y0':
+                        pml = PML(G, ID=key, direction='yminus', yf=value, xf=G.nx, zf=G.nz)
+                    elif key == 'ymax':
+                        pml = PML(G, ID=key, direction='yplus', ys=G.ny - value, xf=G.nx, yf=G.ny, zf=G.nz)
+                    G.pmls.append(pml)
+                    for i in range(G.nx):
+                        for k in range(G.nz):
+                            numID = G.solid[i, pml.ys, k]
+                            material = next(x for x in G.materials if x.numID == numID)
+                            sumer += material.er
+                            summr += material.mr
+                    averageer = sumer / (G.nx * G.nz)
+                    averagemr = summr / (G.nx * G.nz)
+
+                elif key[0] == 'z':
+                    if key == 'z0':
+                        pml = PML(G, ID=key, direction='zminus', zf=value, xf=G.nx, yf=G.ny)
+                    elif key == 'zmax':
+                        pml = PML(G, ID=key, direction='zplus', zs=G.nz - value, xf=G.nx, yf=G.ny, zf=G.nz)
+                    G.pmls.append(pml)
+                    for i in range(G.nx):
+                        for j in range(G.ny):
+                            numID = G.solid[i, j, pml.zs]
+                            material = next(x for x in G.materials if x.numID == numID)
+                            sumer += material.er
+                            summr += material.mr
+                    averageer = sumer / (G.nx * G.ny)
+                    averagemr = summr / (G.nx * G.ny)
+
+                pml.calculate_update_coeffs(averageer, averagemr, G)
+                pbar.update()
+    else:
+        for key, value in G.pmlthickness_cyl.items():
+            value_r = 0
+            if value > 0:
+                if key[0] == 'r':
+                    assert value < G.nr_cyl, "PML thickness in r direction cannot be larger than the grid size in r direction"
+                    pml = PML_cyl(G, direction= 'r', rs_cyl= G.nr_cyl - value, rf_cyl= G.nr_cyl, zf_cyl= G.nz_cyl)
+                    pml.update_alpha_cyl(G)
+                    pml.update_kappa_cyl(G)
+                    pml.calculate_sigma_max_cyl(G)
+                    pml.update_sigma_cyl(G)
+                    pml.update_term_list(G)
+                    G.pmls.append(pml)
+                    value_r = value
+                elif key[0] == 'z':
+                    assert value < G.nz_cyl, "PML thickness in z direction cannot be larger than the grid size in z direction"
+                    pml = PML_cyl(G, direction= 'z', rf_cyl= G.nr_cyl - value_r,zs_cyl= value ,zf_cyl= G.nz_cyl - value)
+                    pml.update_alpha_cyl(G)
+                    pml.update_kappa_cyl(G)
+                    pml.calculate_sigma_max_cyl(G)
+                    pml.update_sigma_cyl(G)
+                    pml.update_term_list(G)
+                    G.pmls.append(pml)
