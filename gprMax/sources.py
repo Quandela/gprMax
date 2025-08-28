@@ -44,6 +44,7 @@ class Source(object):
         self.start = None
         self.stop = None
         self.waveformID = None
+        self.is_integrated = False
 
         self.rcoord_cyl = 1 #To ensure the symmetry, the source must be at r = 0
         self.zcoord_cyl = None
@@ -58,10 +59,10 @@ class Source(object):
         """
 
         # Waveform values on timesteps
-        self.waveformvalues_wholestep = np.zeros((G.iterations), dtype=floattype)
+        self.waveformvalues_wholestep = np.zeros((G.iterations), dtype=np.complex128)
 
         # Waveform values on half timesteps
-        self.waveformvalues_halfstep = np.zeros((G.iterations), dtype=floattype)
+        self.waveformvalues_halfstep = np.zeros((G.iterations), dtype=np.complex128)
 
         waveform = next(x for x in G.waveforms if x.ID == self.waveformID)
 
@@ -70,8 +71,8 @@ class Source(object):
             if time >= self.start and time <= self.stop:
                 # Set the time of the waveform evaluation to account for any delay in the start
                 time -= self.start
-                self.waveformvalues_wholestep[iteration] = waveform.calculate_value(time, G.dt)
-                self.waveformvalues_halfstep[iteration] = waveform.calculate_value(time + 0.5 * G.dt, G.dt)
+                self.waveformvalues_wholestep[iteration] = waveform.calculate_value(time, G.dt, G.cylindrical)
+                self.waveformvalues_halfstep[iteration] = waveform.calculate_value(time + 0.5 * G.dt, G.dt, G.cylindrical)
                 
 
 class VoltageSource(Source):
@@ -84,7 +85,7 @@ class VoltageSource(Source):
         super().__init__()
         self.resistance = None
 
-    def update_electric(self, iteration, updatecoeffsE, ID, Ex, Ey, Ez, G, cylindrical= False):
+    def update_electric(self, iteration, updatecoeffsE, ID, Ex, Ey, Ez, G):
         """Updates electric field values for a voltage source.
 
         Args:
@@ -102,6 +103,7 @@ class VoltageSource(Source):
                 componentID = 'E' + self.polarisation
 
                 if self.polarisation == 'x':
+                    assert np.imag(self.waveformvalues_halfstep[iteration]) == 0, "No imaginary representation required in cartesian"
                     if self.resistance != 0:
                         Ex[i, j, k] -= (updatecoeffsE[ID[G.IDlookup[componentID], i, j, k], 4]
                                         * self.waveformvalues_wholestep[iteration]
@@ -124,16 +126,18 @@ class VoltageSource(Source):
                                         * (1 / (self.resistance * G.dx * G.dy)))
                     else:
                         Ez[i, j, k] = - self.waveformvalues_halfstep[iteration] / G.dz
-            else:
-                if iteration * G.dt >= self.start and iteration * G.dt <= self.stop:
-                    i, j, k = self.rcoord_cyl, 1, self.zcoord_cyl
-                    if self.resistance != 0:
-                        Ez[i, j, k] -= (updatecoeffsE[ID[G.IDlookup['Ez'], i, j, k], 4]
-                                        * self.waveformvalues_wholestep[iteration]
-                                        * (1 / (self.resistance * np.pi * G.dr_cyl * G.dr_cyl)))
-                    else:
-                        Ez[i, j, k] = - self.waveformvalues_halfstep[iteration] / G.dz_cyl
-
+        else:
+            if iteration * G.dt >= self.start and iteration * G.dt <= self.stop:
+                i, j, k = self.rcoord_cyl, 0, self.zcoord_cyl
+                if i == 0:
+                    i = 1
+                if self.resistance != 0:
+                    Ez[i, j, k] -= (updatecoeffsE[ID[G.IDlookup['Ez'], i, j, k], 4]
+                                    * self.waveformvalues_wholestep[iteration]
+                                    * (1 / (self.resistance * np.pi * G.dr_cyl * G.dr_cyl)))
+                else:
+                    Ez[i, j, k] = - self.waveformvalues_halfstep[iteration] / G.dz_cyl
+                    
     def create_material(self, G):
         """Create a new material at the voltage source location that adds the
             voltage source conductivity to the underlying parameters.

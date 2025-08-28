@@ -30,11 +30,10 @@ from gprMax.constants import floattype
 from gprMax.constants import complextype
 from gprMax.exceptions import GeneralError
 from gprMax.materials import Material
-from gprMax.pml import PML
+from gprMax.pml import PML, PML_cyl
 from gprMax.utilities import fft_power
 from gprMax.utilities import human_size
 from gprMax.utilities import round_value
-import gprMax.Fluxes as Fluxes
 
 class Grid(object):
     """Generic grid/mesh."""
@@ -162,7 +161,13 @@ class FDTDGrid(Grid):
         self.srcsteps = [0, 0, 0]
         self.rxsteps = [0, 0, 0]
         self.snapshots = []
-        self.surface_flux = []
+        self.fluxes = []
+        self.total_flux = None
+        self.scattering = False
+        self.empty_sim = True
+        self.scattering_geometrycmds = None
+        self.scatteringgeometry = None
+        self.box_fluxes_enumerate = [] 
 
         #Adding the cylindrical coordinates if rotational symmetry
         #The fields will be described as follows: f(M) = g(r,z)*exp(im*phi)
@@ -174,13 +179,13 @@ class FDTDGrid(Grid):
         self.nr_cyl = 0
         self.nz_cyl = 0
         self.m_cyl = 0
-        self.pmlthickness_cyl = OrderedDict((key, 10) for key in PML.boundaryIDs_cyl)
+        self.pmlthickness_cyl = OrderedDict((key, 10) for key in PML_cyl.boundaryIDs_cyl)
 
-    def initialise_surface(self, corners: list[np.ndarray], center = None, radius= None):
-        if (center is None) and (radius is None):
-            self.surface_flux.append(Fluxes.SurfaceFlux(corners))
-        else:
-            self.surface_flux.append(Fluxes.SurfaceFlux(cylindrical=True, center= center, radius= radius))
+    #def initialise_surface(self, corners: list[np.ndarray], center = None, radius= None):
+    #    if (center is None) and (radius is None):
+    #        self.surface_flux.append(Fluxes.SurfaceFlux(corners))
+    #    else:
+    #        self.surface_flux.append(Fluxes.SurfaceFlux(cylindrical=True, center= center, radius= radius))
 
     def initialise_geometry_arrays(self):
         """
@@ -216,12 +221,12 @@ class FDTDGrid(Grid):
             self.Hz = np.zeros((self.nx + 1, self.ny + 1, self.nz + 1), dtype=floattype)
 
         else:
-            self.Er_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
-            self.E_phi_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
-            self.Ez_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
-            self.Hr_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
-            self.H_phi_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
-            self.Hz_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=floattype)
+            self.Er_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
+            self.Ephi_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
+            self.Ez_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
+            self.Hr_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
+            self.Hphi_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
+            self.Hz_cyl = np.zeros((self.nr_cyl + 1, 1, self.nz_cyl + 1), dtype=np.complex128)
 
     def initialise_std_update_coeff_arrays(self):
         """Initialise arrays for storing update coefficients."""
@@ -382,7 +387,7 @@ def dispersion_analysis(G):
 
                 waveformvalues = np.zeros(G.iterations)
                 for iteration in range(G.iterations):
-                    waveformvalues[iteration] = waveform.calculate_value(iteration * G.dt, G.dt)
+                    waveformvalues[iteration] = waveform.calculate_value(iteration * G.dt, G.dt, G.cylindrical)
 
                 # Ensure source waveform is not being overly truncated before attempting any FFT
                 if np.abs(waveformvalues[-1]) < np.abs(np.amax(waveformvalues)) / 100:

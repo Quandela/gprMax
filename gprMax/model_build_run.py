@@ -36,13 +36,19 @@ from gprMax.constants import complextype
 from gprMax.constants import cudafloattype
 from gprMax.constants import cudacomplextype
 from gprMax.exceptions import GeneralError, CmdInputError
+from scipy.constants import mu_0 as mu0
 
 from gprMax.fields_outputs import store_outputs
+from gprMax.fields_outputs import store_outputs_cyl
 from gprMax.fields_outputs import kernel_template_store_outputs
 from gprMax.fields_outputs import write_hdf5_outputfile
 
 from gprMax.fields_updates_ext import update_electric
 from gprMax.fields_updates_ext import update_magnetic
+from gprMax.fields_updates_ext import update_electric_cyl
+from gprMax.fields_updates_ext import update_magnetic_cyl
+from gprMax.fields_updates_ext import update_electric_origin
+from gprMax.fields_updates_ext import update_magnetic_origin
 from gprMax.fields_updates_ext import update_electric_dispersive_multipole_A
 from gprMax.fields_updates_ext import update_electric_dispersive_multipole_B
 from gprMax.fields_updates_ext import update_electric_dispersive_1pole_A
@@ -79,6 +85,9 @@ from gprMax.utilities import round32
 from gprMax.utilities import timer
 from gprMax.yee_cell_build_ext import build_electric_components
 from gprMax.yee_cell_build_ext import build_magnetic_components
+from gprMax.yee_cell_build_CYLINDRICAL_ext import build_electric_components as build_electric_components_cyl
+from gprMax.yee_cell_build_CYLINDRICAL_ext import build_magnetic_components as build_magnetic_components_cyl
+from gprMax.Fluxes import Flux, save_file_h5py, solve_scattering
 
 
 def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usernamespace):
@@ -146,7 +155,12 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
             write_processed_file(processedlines, appendmodelnumber, G)
 
         # Check validity of command names and that essential commands are present
-        singlecmds, multicmds, geometry = check_cmd_names(processedlines)
+        singlecmds, multicmds, scattering_geometrycmds, geometry, scatteringgeometry = check_cmd_names(processedlines)
+
+        if len(scatteringgeometry) != 0:
+            G.scattering = True
+            G.scattering_geometrycmds = scattering_geometrycmds
+            G.scatteringgeometry = scatteringgeometry
 
         # Create built-in materials
         m = Material(0, 'pec')
@@ -195,10 +209,11 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
                 print('PML: switched off')
             pass  # If all the PMLs are switched off don't need to build anything
         else:
+            # Set default CFS parameters for PML if not given
+            if not G.cfs:
+                G.cfs = [CFS()]
+
             if not G.cylindrical:
-                # Set default CFS parameters for PML if not given
-                if not G.cfs:
-                    G.cfs = [CFS()]
                 if G.messages:
                     if all(value == G.pmlthickness['x0'] for value in G.pmlthickness.values()):
                         pmlinfo = str(G.pmlthickness['x0'])
@@ -208,9 +223,18 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
                             pmlinfo += '{}: {}, '.format(key, value)
                         pmlinfo = pmlinfo[:-2] + ' cells'
                     print('PML: formulation: {}, order: {}, thickness: {}'.format(G.pmlformulation, len(G.cfs), pmlinfo))
+                pbar = tqdm(total=sum(1 for value in G.pmlthickness.values() if value > 0), desc='Building PML boundaries', ncols=get_terminal_width() - 1, file=sys.stdout, disable=not G.progressbars)
             else:
-
-            pbar = tqdm(total=sum(1 for value in G.pmlthickness.values() if value > 0), desc='Building PML boundaries', ncols=get_terminal_width() - 1, file=sys.stdout, disable=not G.progressbars)
+                if G.messages:
+                    if all(value == G.pmlthickness_cyl['r'] for value in G.pmlthickness_cyl.values()):
+                        pmlinfo = str(G.pmlthickness_cyl['r'])
+                    else:
+                        pmlinfo = ''
+                        for key, value in G.pmlthickness_cyl.items():
+                            pmlinfo += '{}: {}, '.format(key, value)
+                        pmlinfo = pmlinfo[:-2] + ' cells'
+                    print('PML: cylindrical mode, thicknes: {}'.format(pmlinfo))
+                pbar = tqdm(total=sum(1 for value in G.pmlthickness_cyl.values() if value > 0), desc='Building PML boundaries', ncols=get_terminal_width() - 1, file=sys.stdout, disable=not G.progressbars)
             build_pmls(G, pbar)
             pbar.close()
 
@@ -218,44 +242,52 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
         # of every Yee cell
         if G.messages: print()
         pbar = tqdm(total=2, desc='Building main grid', ncols=get_terminal_width() - 1, file=sys.stdout, disable=not G.progressbars)
-        build_electric_components(G.solid, G.rigidE, G.ID, G)
-        pbar.update()
-        build_magnetic_components(G.solid, G.rigidH, G.ID, G)
-        pbar.update()
-        pbar.close()
+        print(Fore.BLUE + "Cylindrical ? " + str(G.cylindrical) + Fore.RESET)
+        if not G.cylindrical:
+            build_electric_components(G.solid, G.rigidE, G.ID, G)
+            pbar.update()
+            build_magnetic_components(G.solid, G.rigidH, G.ID, G)
+            pbar.update()
+            pbar.close()
+        else:
+            build_electric_components_cyl(G.solid, G.rigidE, G.ID, G)
+            pbar.update()
+            build_magnetic_components_cyl(G.solid, G.rigidH, G.ID, G)
+            pbar.update()
+            pbar.close()
 
         # Add PEC boundaries to invariant direction in 2D modes
         # N.B. 2D modes are a single cell slice of 3D grid
-        if '2D TMx' in G.mode:
-            # Ey & Ez components
-            G.ID[1, 0, :, :] = 0
-            G.ID[1, 1, :, :] = 0
-            G.ID[2, 0, :, :] = 0
-            G.ID[2, 1, :, :] = 0
-        elif '2D TMy' in G.mode:
-            # Ex & Ez components
-            G.ID[0, :, 0, :] = 0
-            G.ID[0, :, 1, :] = 0
-            G.ID[2, :, 0, :] = 0
-            G.ID[2, :, 1, :] = 0
-        elif '2D TMz' in G.mode:
-            # Ex & Ey components
-            G.ID[0, :, :, 0] = 0
-            G.ID[0, :, :, 1] = 0
-            G.ID[1, :, :, 0] = 0
-            G.ID[1, :, :, 1] = 0
+        if not G.cylindrical:
+            if '2D TMx' in G.mode:
+                # Ey & Ez components
+                G.ID[1, 0, :, :] = 0
+                G.ID[1, 1, :, :] = 0
+                G.ID[2, 0, :, :] = 0
+                G.ID[2, 1, :, :] = 0
+            elif '2D TMy' in G.mode:
+                # Ex & Ez components
+                G.ID[0, :, 0, :] = 0
+                G.ID[0, :, 1, :] = 0
+                G.ID[2, :, 0, :] = 0
+                G.ID[2, :, 1, :] = 0
+            elif '2D TMz' in G.mode:
+                # Ex & Ey components
+                G.ID[0, :, :, 0] = 0
+                G.ID[0, :, :, 1] = 0
+                G.ID[1, :, :, 0] = 0
+                G.ID[1, :, :, 1] = 0
 
         # Process any voltage sources (that have resistance) to create a new
         # material at the source location
         for voltagesource in G.voltagesources:
             voltagesource.create_material(G)
-
         # Initialise arrays of update coefficients to pass to update functions
         G.initialise_std_update_coeff_arrays()
 
         # Initialise arrays of update coefficients and temporary values if
         # there are any dispersive materials
-        if Material.maxpoles != 0:
+        if Material.maxpoles != 0 and not G.cylindrical:
             # Update estimated memory (RAM) usage
             G.memoryusage += int(3 * Material.maxpoles * (G.nx + 1) * (G.ny + 1) * (G.nz + 1) * np.dtype(complextype).itemsize)
             G.memory_check()
@@ -265,7 +297,7 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
             G.initialise_dispersive_arrays()
 
         # Check there is sufficient memory to store any snapshots
-        if G.snapshots:
+        if G.snapshots and not G.cylindrical:
             snapsmemsize = 0
             for snap in G.snapshots:
                 # 2 x required to account for electric and magnetic fields
@@ -286,15 +318,16 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
             print(materialstable.table)
 
         # Check to see if numerical dispersion might be a problem
-        results = dispersion_analysis(G)
-        if results['error'] and G.messages:
-            print(Fore.RED + "\nWARNING: Numerical dispersion analysis not carried out as {}".format(results['error']) + Style.RESET_ALL)
-        elif results['N'] < G.mingridsampling:
-            raise GeneralError("Non-physical wave propagation: Material '{}' has wavelength sampled by {} cells, less than required minimum for physical wave propagation. Maximum significant frequency estimated as {:g}Hz".format(results['material'].ID, results['N'], results['maxfreq']))
-        elif results['deltavp'] and np.abs(results['deltavp']) > G.maxnumericaldisp and G.messages:
-            print(Fore.RED + "\nWARNING: Potentially significant numerical dispersion. Estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']) + Style.RESET_ALL)
-        elif results['deltavp'] and G.messages:
-            print("\nNumerical dispersion analysis: estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']))
+        if not G.cylindrical:
+            results = dispersion_analysis(G)
+            if results['error'] and G.messages:
+                print(Fore.RED + "\nWARNING: Numerical dispersion analysis not carried out as {}".format(results['error']) + Style.RESET_ALL)
+            elif results['N'] < G.mingridsampling:
+                raise GeneralError("Non-physical wave propagation: Material '{}' has wavelength sampled by {} cells, less than required minimum for physical wave propagation. Maximum significant frequency estimated as {:g}Hz".format(results['material'].ID, results['N'], results['maxfreq']))
+            elif results['deltavp'] and np.abs(results['deltavp']) > G.maxnumericaldisp and G.messages:
+                print(Fore.RED + "\nWARNING: Potentially significant numerical dispersion. Estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']) + Style.RESET_ALL)
+            elif results['deltavp'] and G.messages:
+                print("\nNumerical dispersion analysis: estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']))
 
     # If geometry information to be reused between model runs
     else:
@@ -368,20 +401,45 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
         os.chdir(curdir)
         basename, ext = os.path.splitext(inputfilename)
         outputfile = os.path.join(outputdir, basename + appendmodelnumber + '.out')
+        outputfile_fluxes = os.path.join(outputdir, G.title + '_fluxes.out')
         if G.messages:
             print('\nOutput file: {}\n'.format(outputfile))
+            if G.fluxes:
+                print('\nFluxes output file: {}\n'.format(outputfile_fluxes))
 
-        # Main FDTD solving functions for either CPU or GPU
-        if G.gpu is None:
-            tsolve = solve_cpu(currentmodelrun, modelend, G)
+
+        # Main FDTD solving functions for either CPU or GPU when no scattering
+        print("\n" + str(G.scattering) + "\n")
+        if not G.scattering:
+            if G.gpu is None:
+                tsolve = solve_cpu(currentmodelrun, modelend, G)
+            else:
+                tsolve, memsolve = solve_gpu(currentmodelrun, modelend, G)
         else:
-            tsolve, memsolve = solve_gpu(currentmodelrun, modelend, G)
+            if G.gpu: print(Fore.RED + "\nGPU is not yet supported for scattering, it will run on the CPU.")
+            tsolve = solve_scattering(currentmodelrun, modelend, G)
+        
+        # Calculate the fluxes through the different surfaces, then sum
+        if G.fluxes:
+            print('\nCalculating fluxes...')
+            for flux in G.fluxes:
+                if G.scattering:
+                    flux.calculate_Poynting_frequency_flux(G, incident= True)
+                flux.calculate_Poynting_frequency_flux(G)
+            G.total_flux = G.fluxes[0].Poynting_frequency_flux
+            print(G.total_flux.shape)
+            for i in range(1, len(G.fluxes)):
+                G.total_flux += G.fluxes[i].Poynting_frequency_flux
+            print('Total flux: {}'.format(G.total_flux))
+            save_file_h5py(outputfile_fluxes, G)
+
 
         # Write an output file in HDF5 format
         write_hdf5_outputfile(outputfile, G)
 
         # Write any snapshots to file
         if G.snapshots:
+            assert not G.cylindrical, "Snapshots are not supported in cylindrical mode."
             # Create directory and construct filename from user-supplied name and model run number
             snapshotdir = os.path.join(G.inputdirectory, os.path.splitext(G.inputfilename)[0] + '_snaps' + appendmodelnumber)
             if not os.path.exists(snapshotdir):
@@ -410,7 +468,7 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
     return tsolve
 
 
-def solve_cpu(currentmodelrun, modelend, G):
+def solve_cpu(currentmodelrun, modelend, G: FDTDGrid):
     """
     Solving using FDTD method on CPU. Parallelised using Cython (OpenMP) for
     electric and magnetic field updates, and PML updates.
@@ -423,59 +481,105 @@ def solve_cpu(currentmodelrun, modelend, G):
     Returns:
         tsolve (float): Time taken to execute solving
     """
-
+    rcoord = 0
+    zcoord_cyl = 50
+    xcoord = 50 + rcoord - 1
+    ycoord = 50
+    zcoord = zcoord_cyl
     tsolvestart = timer()
-
+    # file = 0
+    # if G.cylindrical:
+    #     file = open(os.path.join(G.inputdirectory,'cylindrical.txt'), 'w')
+    # else:
+    #     file = open(os.path.join(G.inputdirectory, 'cartesian.txt'), 'w')
     for iteration in tqdm(range(G.iterations), desc='Running simulation, model ' + str(currentmodelrun) + '/' + str(modelend), ncols=get_terminal_width() - 1, file=sys.stdout, disable=not G.progressbars):
+        # file.write("ITERATION: " + str(iteration) + " ==========================\n")
         # Store field component values for every receiver and transmission line
-        store_outputs(iteration, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz, G)
-
+        # print('\n=============================================================')
+        if not G.cylindrical:
+            store_outputs(iteration, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz, G)
+        else:
+            store_outputs_cyl(iteration, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl, G)
         # Store any snapshots
         for snap in G.snapshots:
             if snap.time == iteration + 1:
                 snap.store(G)
 
         # Update magnetic field components
-        update_magnetic(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsH, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+        if not G.cylindrical:
+            update_magnetic(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsH, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+            # file.write("UPDATE MAGNETIQUE\n Ex= "+ str(G.Ex[xcoord,ycoord,zcoord]) + "\n Ey= " + str(G.Ey[xcoord,ycoord,zcoord]) + "\n Ez= " + str(G.Ez[xcoord,ycoord,zcoord]) + "\n Hx= " + str(G.Hx[xcoord,ycoord,zcoord]) + "\n Hy= " + str(G.Hy[xcoord,ycoord,zcoord]) + "\n Hz= " + str(G.Hz[xcoord,ycoord,zcoord]) + "\n")
+        else:
+            update_magnetic_cyl(G.nr_cyl, G.nz_cyl, G.m_cyl, G.nthreads, G.updatecoeffsH, G.ID, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl)
+            # update_magnetic_origin(G.nr_cyl, G.nz_cyl, G.m_cyl, G.nthreads, G.dt, mu0, G.dr_cyl, G.updatecoeffsE, G.updatecoeffsH, G.ID, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl)
+            # file.write("UPDATE MAGNETIQUE\n Er_cyl= " + str(np.real(G.Er_cyl[rcoord, 0, zcoord_cyl])) + "\n Ephi_cyl= " + str(np.real(G.Ephi_cyl[rcoord, 0, zcoord_cyl])) + "\n Ez_cyl= " + str(np.real(G.Ez_cyl[rcoord, 0, zcoord_cyl])) + "\n Hr_cyl= " + str(np.real(G.Hr_cyl[rcoord, 0, zcoord_cyl])) + "\n Hphi_cyl= " + str(np.real(G.Hphi_cyl[rcoord, 0, zcoord_cyl])) + "\n Hz_cyl= " + str(np.real(G.Hz_cyl[rcoord, 0, zcoord_cyl])) + "\n")
+        # file.write("\n")
 
         # Update magnetic field components with the PML correction
         for pml in G.pmls:
-            pml.update_magnetic(G)
+            pml.update_magnetic(G) #No need to check for cylindrical mode here as there exists PML_cyl class with the same method
+        
+        # if G.cylindrical:
+            # file.write("UPDATE PML MAGNETIQUE\n Er_cyl= " + str(np.real(G.Er_cyl[rcoord, 0, zcoord_cyl])) + "\n Ephi_cyl= " + str(np.real(G.Ephi_cyl[rcoord, 0, zcoord_cyl])) + "\n Ez_cyl= " + str(np.real(G.Ez_cyl[rcoord, 0, zcoord_cyl])) + "\n Hr_cyl= " + str(np.real(G.Hr_cyl[rcoord, 0, zcoord_cyl])) + "\n Hphi_cyl[i]= " + str(np.real(G.Hphi_cyl[rcoord, 0, zcoord_cyl])) + " / Hphi_cyl[i-1]= " + str(np.real(G.Hphi_cyl[rcoord - 1, 0, zcoord_cyl])) +  "\n Hz_cyl= " + str(np.real(G.Hz_cyl[rcoord, 0, zcoord_cyl])) + "\n")
+        # else:
+        #     file.write("UPDATE PML MAGNETIQUE\n Ex= "+ str(G.Ex[xcoord,ycoord,zcoord]) + "\n Ey= " + str(G.Ey[xcoord,ycoord,zcoord]) + "\n Ez= " + str(G.Ez[xcoord,ycoord,zcoord]) + "\n Hx= " + str(G.Hx[xcoord,ycoord,zcoord]) + "\n Hy= " + str(G.Hy[xcoord,ycoord,zcoord]) + "\n Hz= " + str(G.Hz[xcoord,ycoord,zcoord]) + "\n")
+        # file.write("\n")
 
         # Update magnetic field components from sources
         for source in G.transmissionlines + G.magneticdipoles:
+            if G.cylindrical:
+                raise CmdInputError("Magnetic dipole and transmission lines sources are not supported in cylindrical mode.")
             source.update_magnetic(iteration, G.updatecoeffsH, G.ID, G.Hx, G.Hy, G.Hz, G)
 
         # Update electric field components
         # All materials are non-dispersive so do standard update
         if Material.maxpoles == 0:
-            update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+            if not G.cylindrical:
+                update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+                # file.write("UPDATE ELECTRIQUE\n Ex= "+ str(G.Ex[xcoord,ycoord,zcoord]) + "\n Ey= " + str(G.Ey[xcoord,ycoord,zcoord]) + "\n Ez= " + str(G.Ez[xcoord,ycoord,zcoord]) + "\n Hx= " + str(G.Hx[xcoord,ycoord,zcoord]) + "\n Hy= " + str(G.Hy[xcoord,ycoord,zcoord]) + "\n Hz= " + str(G.Hz[xcoord,ycoord,zcoord]) + "\n")
+            else:
+                update_electric_cyl(G.nr_cyl, G.nz_cyl, G.m_cyl, G.nthreads, G.dr_cyl, G.dz_cyl, G.updatecoeffsE, G.ID, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl)
+                # update_electric_origin(G.nr_cyl, G.nz_cyl, G.m_cyl, G.nthreads, G.dt, mu0, G.dr_cyl, G.updatecoeffsE, G.updatecoeffsH, G.ID, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G.Hr_cyl, G.Hphi_cyl, G.Hz_cyl)
+                # file.write("UPDATE ELECTRIQUE\n Er_cyl= " + str(np.real(G.Er_cyl[rcoord, 0, zcoord_cyl])) + "\n Ephi_cyl= " + str(np.real(G.Ephi_cyl[rcoord, 0, zcoord_cyl])) + "\n Ez_cyl= " + str(np.real(G.Ez_cyl[rcoord, 0, zcoord_cyl])) + "\n Hr_cyl= " + str(np.real(G.Hr_cyl[rcoord, 0, zcoord_cyl])) + "\n Hphi_cyl= " + str(np.real(G.Hphi_cyl[rcoord, 0, zcoord_cyl])) + "\n Hz_cyl= " + str(np.real(G.Hz_cyl[rcoord, 0, zcoord_cyl])) + "\n")
+            # file.write("\n")
         # If there are any dispersive materials do 1st part of dispersive update
         # (it is split into two parts as it requires present and updated electric field values).
         elif Material.maxpoles == 1:
+            assert not G.cylindrical, "Dispersive materials are not supported in cylindrical mode."
             update_electric_dispersive_1pole_A(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
         elif Material.maxpoles > 1:
+            assert not G.cylindrical, "Dispersive materials are not supported in cylindrical mode."
             update_electric_dispersive_multipole_A(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
 
         # Update electric field components with the PML correction
         for pml in G.pmls:
-            pml.update_electric(G)
+            pml.update_electric(G) #No need to check for cylindrical mode here as there exists PML_cyl class with the same method
 
         # Update electric field components from sources (update any Hertzian dipole sources last)
         for source in G.voltagesources + G.transmissionlines + G.hertziandipoles:
-            source.update_electric(iteration, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G)
+            assert len(G.transmissionlines) == 0 or not G.cylindrical, "Transmission lines are not supported in cylindrical mode."
+            if not G.cylindrical:
+                source.update_electric(iteration, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G)
+            else:
+                source.update_electric(iteration, G.updatecoeffsE, G.ID, G.Er_cyl, G.Ephi_cyl, G.Ez_cyl, G)
 
         # If there are any dispersive materials do 2nd part of dispersive update
         # (it is split into two parts as it requires present and updated electric
         # field values). Therefore it can only be completely updated after the
         # electric field has been updated by the PML and source updates.
         if Material.maxpoles == 1:
+            assert not G.cylindrical, "Dispersive materials are not supported in cylindrical mode."
             update_electric_dispersive_1pole_B(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
         elif Material.maxpoles > 1:
+            assert not G.cylindrical, "Dispersive materials are not supported in cylindrical mode."
             update_electric_dispersive_multipole_B(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
+        
+        for flux in G.fluxes:
+            flux.save_fields_fluxes(G, iteration)
+        
 
     tsolve = timer() - tsolvestart
-
+    # file.close()
     return tsolve
 
 

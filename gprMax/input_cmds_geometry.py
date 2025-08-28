@@ -411,7 +411,7 @@ def process_geometrycmds(geometry, G):
                         m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                         m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                         m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                        m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                        m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                         # Append the new material object to the materials list
                         G.materials.append(m)
@@ -444,34 +444,34 @@ def process_geometrycmds(geometry, G):
         elif tmp[0] == '#cylinder_cyl:':
             if not G.cylindrical:
                 raise GeneralError(tmp[0], " implemented only in cylindrical")
-            if len(tmp) < 4:
+            if len(tmp) < 5:
                 raise CmdInputError("'" + ' '.join(tmp) + "'" + ' requires at least four parameters')
 
             # Isotropic case
             elif len(tmp) == 5:
-                materialrequested = [tmp[4]]
+                materialsrequested = [tmp[4]]
                 average_cyl_cyl = G.averagevolumeobjects
 
             # Isotropic case with no user specified averaging
             elif len(tmp) == 6:
-                materialrequested = [tmp[4]]
-                if tmp[8].lower() == 'y':
-                    averagebox = True
-                elif tmp[8].lower() == 'n':
-                    averagebox = False
+                materialsrequested = [tmp[4]]
+                if tmp[5].lower() == 'y':
+                    average_cyl_cyl = True
+                elif tmp[5].lower() == 'n':
+                    average_cyl_cyl = False
                 else:
                     raise CmdInputError("'" + ' '.join(tmp) + "'" + ' requires averaging to be either y or n')
 
             #Uniaxial anisotropic case
             elif len(tmp) == 7:
-                materialrequested = tmp[4:]
+                materialsrequested = tmp[4:]
 
             else:
                 raise CmdInputError("'" + ' '.join(tmp) + "'" + ' too many parameters have been given')
 
-            r_width = round_value(tmp[1]/G.dr_cyl)
-            z_min = round_value(tmp[2] / G.dz_cyl)
-            z_max = round_value(tmp[3] / G.dz_cyl)
+            r_width = round_value(float(tmp[1]) / G.dr_cyl)
+            z_min = round_value(float(tmp[2]) / G.dz_cyl)
+            z_max = round_value(float(tmp[3]) / G.dz_cyl)
 
             if r_width < 0 or r_width > G.nr_cyl:
                 raise CmdInputError("The r-direction should be greater than 0 and included in the domain")
@@ -481,7 +481,11 @@ def process_geometrycmds(geometry, G):
                 raise CmdInputError("The higher z-coordinate should be greater than 0 and included in the domain")
 
             # Look up requested materials in existing list of material instances
+            print("Materials requested: ", materialsrequested)
+            for x in materialsrequested:
+                print(x)
             materials = [y for x in materialsrequested for y in G.materials if y.ID == x]
+            print("Materials found: ", materials[0].er," ", materials[0].se," ", materials[0].mr," ", materials[0].sm)
 
             if len(materials) != len(materialsrequested):
                 notfound = [x for x in materialsrequested if x not in materials]
@@ -489,8 +493,9 @@ def process_geometrycmds(geometry, G):
 
             # Isotropic case
             if len(materials) == 1:
-                averaging = materials[0].averagable and averagebox
+                averaging = materials[0].averagable and average_cyl_cyl
                 numID = numIDr = numIDphi= numIDz = materials[0].numID
+                print(materials[0].numID)
 
             # Uniaxial anisotropic case
             elif len(materials) == 3:
@@ -510,7 +515,7 @@ def process_geometrycmds(geometry, G):
                     m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                     m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                     m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                    m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                    m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                     # Append the new material object to the materials list
                     G.materials.append(m)
@@ -603,7 +608,7 @@ def process_geometrycmds(geometry, G):
                     m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                     m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                     m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                    m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                    m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                     # Append the new material object to the materials list
                     G.materials.append(m)
@@ -686,7 +691,7 @@ def process_geometrycmds(geometry, G):
                     m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                     m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                     m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                    m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                    m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                     # Append the new material object to the materials list
                     G.materials.append(m)
@@ -778,7 +783,7 @@ def process_geometrycmds(geometry, G):
                         m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                         m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                         m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                        m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                        m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                         # Append the new material object to the materials list
                         G.materials.append(m)
@@ -827,6 +832,7 @@ def process_geometrycmds(geometry, G):
                     tqdm.write('Cylindrical sector with centre {:g}m, {:g}m, radius {:g}m, starting angle {:.1f} degrees, sector angle {:.1f} degrees, of material(s) {} created.'.format(ctr1, ctr2, r, (sectorstartangle / (2 * np.pi)) * 360, (sectorangle / (2 * np.pi)) * 360, ', '.join(materialsrequested)))
 
         elif tmp[0] == '#sphere:':
+            print("Sphere detected")
             if G.cylindrical:
                 raise GeneralError(tmp[0], " not yet implemented in cylindrical")
             if len(tmp) < 6:
@@ -890,13 +896,13 @@ def process_geometrycmds(geometry, G):
                     m.er = np.mean((materials[0].er, materials[1].er, materials[2].er), axis=0)
                     m.se = np.mean((materials[0].se, materials[1].se, materials[2].se), axis=0)
                     m.mr = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
-                    m.sm = np.mean((materials[0].mr, materials[1].mr, materials[2].mr), axis=0)
+                    m.sm = np.mean((materials[0].sm, materials[1].sm, materials[2].sm), axis=0)
 
                     # Append the new material object to the materials list
                     G.materials.append(m)
 
             build_sphere(xc, yc, zc, r, G.dx, G.dy, G.dz, numID, numIDx, numIDy, numIDz, averaging, G.solid, G.rigidE, G.rigidH, G.ID)
-
+            print("Sphere should have been built !")
             if G.messages:
                 if averaging:
                     dielectricsmoothing = 'on'

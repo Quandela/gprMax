@@ -98,19 +98,18 @@ def process_multicmds(multicmds, G):
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
             tmp = cmdinstance.split()
-
             # Check polarity & position parameters
-            polarisation = tmp[0].lower()
-            if polarisation not in ('x', 'y', 'z'):
-                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be x, y, or z')
-            if '2D TMx' in G.mode and (polarisation == 'y' or polarisation == 'z'):
-                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be x in 2D TMx mode')
-            elif '2D TMy' in G.mode and (polarisation == 'x' or polarisation == 'z'):
-                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be y in 2D TMy mode')
-            elif '2D TMz' in G.mode and (polarisation == 'x' or polarisation == 'y'):
-                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be z in 2D TMz mode')
-            elif 'Cylindrical' in G.mode and (polarisation != 'z'):
-                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be z in Cylindrical mode')
+                
+            if not G.cylindrical:
+                polarisation = tmp[0].lower()
+                if polarisation not in ('x', 'y', 'z'):
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be x, y, or z')
+                if '2D TMx' in G.mode and (polarisation == 'y' or polarisation == 'z'):
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be x in 2D TMx mode')
+                elif '2D TMy' in G.mode and (polarisation == 'x' or polarisation == 'z'):
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be y in 2D TMy mode')
+                elif '2D TMz' in G.mode and (polarisation == 'x' or polarisation == 'y'):
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' polarisation must be z in 2D TMz mode')
 
             if not G.cylindrical:
                 if len(tmp) < 6:
@@ -143,7 +142,8 @@ def process_multicmds(multicmds, G):
             else:
                 if len(tmp) < 4:
                     raise CmdInputError(
-                        "'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at least six parameters')
+                        "'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at least four parameters')
+                rcoord_cyl = G.calculate_coord('r_cyl', tmp[0])
                 zcoord_cyl = G.calculate_coord('z_cyl', tmp[1])
                 resistance = float(tmp[2])
                 if resistance < 0:
@@ -154,13 +154,13 @@ def process_multicmds(multicmds, G):
                     raise CmdInputError("'" + cmdname + ': ' + ' '.join(
                         tmp) + "'" + ' there is no waveform with the identifier {}'.format(tmp[5]))
 
-                check_coordinates_cylindrical(1, zcoord_cyl)
+                check_coordinates_cylindrical(rcoord_cyl, zcoord_cyl)
                 #To have a cylindrical symmetry, the source must be at r=0
-                if zcoord_cyl > G.pmlthickness_cyl['zmax'] or zcoord_cyl < G.pmlthickness_cyl['z0']:
+                z_thickness = G.pmlthickness_cyl['z']
+                if zcoord_cyl > G.nz_cyl - z_thickness or zcoord_cyl < z_thickness:
                     print(Fore.RED + "WARNING: '" + cmdname + ': ' + ' '.join(tmp) + "'" + ' sources and receivers should not normally be positioned within the PML.' + Style.RESET_ALL)
-
                 v = VoltageSource()
-                v.polarisation = 'z' #Necessary for the symmetry
+                v.polarisation = 'z' #I went with this, so no circular Ephi or Er sources :)
                 v.zcoord_cyl = zcoord_cyl
                 v.ID = v.__class__.__name__ + '(' + '0'  + ',' + str(v.zcoord_cyl) + ')'
                 v.waveformID = tmp[3]
@@ -314,9 +314,9 @@ def process_multicmds(multicmds, G):
     # Magnetic dipole
     cmdname = '#magnetic_dipole'
     if multicmds[cmdname] is not None:
-        if G.cylindrical:
-            raise CmdInputError(cmdname + " not supported for cylindrical")
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise CmdInputError(cmdname + " not supported for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) < 5:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at least five parameters')
@@ -385,9 +385,9 @@ def process_multicmds(multicmds, G):
     # Transmission line
     cmdname = '#transmission_line'
     if multicmds[cmdname] is not None:
-        if G.cylindrical:
-            raise CmdInputError(cmdname + " not supported for cylindrical")
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise CmdInputError(cmdname + " not supported for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) < 6:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at least six parameters')
@@ -512,7 +512,7 @@ def process_multicmds(multicmds, G):
                 phicoord_cyl = float(tmp[1])
                 zcoord_cyl = round_value(float(tmp[2]) / G.dz_cyl)
 
-                if rcoord_cyl < G.nr_cyl - G.pmlthickness_cyl['xmax'] or zcoord_cyl < G.pmlthickness_cyl['z0'] or zcoord_cyl > G.nz - G.pmlthickness_cyl['zmax']:
+                if rcoord_cyl > G.nr_cyl - G.pmlthickness_cyl['r'] or zcoord_cyl < G.pmlthickness_cyl['z'] or zcoord_cyl > G.nz_cyl - G.pmlthickness_cyl['z']:
                     print(Fore.RED + "WARNING: '" + cmdname + ': ' + ' '.join(tmp) + "'" + ' sources and receivers should not normally be positioned within the PML.' + Style.RESET_ALL)
 
                 r = Rx()
@@ -551,9 +551,9 @@ def process_multicmds(multicmds, G):
     # Receiver array
     cmdname = '#rx_array'
     if multicmds[cmdname] is not None:
-        if G.cylindrical:
-            raise GeneralError(cmdname + " not supported yet for cylindrical")
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 9:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly nine parameters')
@@ -619,6 +619,8 @@ def process_multicmds(multicmds, G):
     cmdname = '#snapshot'
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 11:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly eleven parameters')
@@ -779,8 +781,9 @@ def process_multicmds(multicmds, G):
     cmdname = '#add_dispersion_drude'
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
-
             if len(tmp) < 5:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at least five parameters')
             if int(tmp[0]) < 0:
@@ -814,6 +817,8 @@ def process_multicmds(multicmds, G):
     cmdname = '#soil_peplinski'
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 7:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires at exactly seven parameters')
@@ -845,6 +850,8 @@ def process_multicmds(multicmds, G):
     cmdname = '#geometry_view'
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 11:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly eleven parameters')
@@ -895,6 +902,8 @@ def process_multicmds(multicmds, G):
     cmdname = '#geometry_objects_write'
     if multicmds[cmdname] is not None:
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 7:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly seven parameters')
@@ -927,6 +936,8 @@ def process_multicmds(multicmds, G):
         if len(multicmds[cmdname]) > 2:
             raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' can only be used up to two times, for up to a 2nd order PML')
         for cmdinstance in multicmds[cmdname]:
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
             tmp = cmdinstance.split()
             if len(tmp) != 12:
                 raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly twelve parameters')
@@ -969,3 +980,211 @@ def process_multicmds(multicmds, G):
                 print('PML CFS parameters: alpha (scaling: {}, scaling direction: {}, min: {:g}, max: {:g}), kappa (scaling: {}, scaling direction: {}, min: {:g}, max: {:g}), sigma (scaling: {}, scaling direction: {}, min: {:g}, max: {}) created.'.format(cfsalpha.scalingprofile, cfsalpha.scalingdirection, cfsalpha.min, cfsalpha.max, cfskappa.scalingprofile, cfskappa.scalingdirection, cfskappa.min, cfskappa.max, cfssigma.scalingprofile, cfssigma.scalingdirection, cfssigma.min, cfssigma.max))
 
             G.cfs.append(cfs)
+
+    #Fluxes
+    cmdname = '#flux'
+    if multicmds[cmdname] is not None:
+        for cmdinstance in multicmds[cmdname]:
+            tmp = cmdinstance.split()
+            if G.cylindrical:
+                raise GeneralError(cmdname + " not supported yet for cylindrical")
+            if len(tmp) != 11:
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires exactly eleven parameters')
+            if tmp[0] not in Flux.possible_normals:
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires a valid normal direction: {}'.format(', '.join(Flux.possible_normals)))
+            if tmp[1] not in Flux.possible_direction:
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires a valid direction: {}'.format(', '.join(Flux.possible_direction)))
+            x1 = round_value(float(tmp[2]) / G.dx)
+            y1 = round_value(float(tmp[3]) / G.dy)
+            z1 = round_value(float(tmp[4]) / G.dz)
+            x2 = round_value(float(tmp[5]) / G.dx)
+            y2 = round_value(float(tmp[6]) / G.dy)
+            z2 = round_value(float(tmp[7]) / G.dz)
+            w_min = float(tmp[8])
+            w_max = float(tmp[9])
+            w_num = int(tmp[10])
+            print(y2, ' ', G.ny)
+            if x1 < 0 or y1 < 0 or z1 < 0 or x2 < 0 or y2 < 0 or z2 < 0:
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires positive values for the coordinates')
+            if x1 > G.nx or y1 > G.ny or z1 > G.nz or x2 > G.nx or y2 > G.ny or z2 > G.nz:
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires values fitting in the domain')
+            if tmp[0] == 'x':
+                if x1 != x2:
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires the x-coordinates to be equal for a flux normal to the x-axis')
+                else:
+                    assert y1 < y2 and z1 < z2, "y1 should be less than y2 and z1 should be less than z2 to define a valid flux area"
+            elif tmp[0] == 'y':
+                if y1 != y2:
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires the y-coordinates to be equal for a flux normal to the y-axis')
+                else:
+                    assert x1 < x2 and z1 < z2, "x1 should be less than x2 and z1 should be less than z2 to define a valid flux area"
+            elif tmp[0] == 'z':
+                if z1 != z2:
+                    raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' requires the z-coordinates to be equal for a flux normal to the z-axis')
+                else:
+                    assert x1 < x2 and y1 < y2, "x1 should be less than x2 and y1 should be less than y2 to define a valid flux area"
+            assert w_min > 0 and w_max > 0 and w_num > 0, "wavelengths and the number of wavelengths should be strictly positive"
+            flux = Flux(G, tmp[0], tmp[1], np.array([x1, y1, z1]), np.array([x2, y2, z2]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+    
+    cmdname = '#box_flux'
+    if multicmds[cmdname] is not None:
+        from gprMax.Fluxes import Flux
+        for cmdinstance in multicmds[cmdname]:
+            tmp = cmdinstance.split()
+            if G.cylindrical:
+                raise CmdInputError(cmdname + " not yet supported with cylindrical coordinates")
+            if len(tmp) != 12:
+                raise CmdInputError(cmdname + " requires exactly 12 parameters: xcenter ycenter zcenter xminus xplus yminus yplus zminus zplus wavelength_min wavelength_max number_of_wavelengths")
+            xcenter = round_value(float(tmp[0]) / G.dx)
+            ycenter = round_value(float(tmp[1]) / G.dy)
+            zcenter = round_value(float(tmp[2]) / G.dz)
+            xminus = round_value(float(tmp[3]) / G.dx)
+            xplus = round_value(float(tmp[4]) / G.dx)
+            yminus = round_value(float(tmp[5]) / G.dy)
+            yplus = round_value(float(tmp[6]) / G.dy)
+            zminus = round_value(float(tmp[7]) / G.dz)
+            zplus = round_value(float(tmp[8]) / G.dz)
+            w_min = float(tmp[9])
+            w_max = float(tmp[10])
+            w_num = int(tmp[11])
+            print(np.linspace(w_min, w_max, w_num, dtype= floattype))
+            assert xcenter > 0 and ycenter > 0 and zcenter > 0 and xminus > 0 and xplus > 0 and yminus > 0 and yplus > 0 and zminus > 0 and zplus > 0, CmdInputError("Every parameter should be positive")
+            assert xcenter - xminus >= 0 and xcenter + xplus <= G.nx, "The x-faces of the box should be inside the domain"
+            if xcenter - xminus <= G.pmlthickness['x0'] or xcenter + xplus >= G.nx - G.pmlthickness['xmax']: 
+                print(Fore.RED + "WARNING: '" + cmdname + "': x-faces should not be inside PMLs" + Style.RESET_ALL)
+            assert ycenter - yminus >= 0 and ycenter + yplus <= G.ny, "The y-faces of the box should be inside the domain"
+            if ycenter - yminus <= G.pmlthickness['y0'] or ycenter + yplus >= G.ny - G.pmlthickness['ymax']: 
+                print(Fore.RED + "WARNING: '" + cmdname + "': y-faces should not be inside PMLs" + Style.RESET_ALL)
+            assert zcenter - zminus >= 0 and zcenter + zplus <= G.nz, "The z-faces of the box should be inside the domain"
+            if zcenter - zminus <= G.pmlthickness['z0'] or zcenter + zplus >= G.nz - G.pmlthickness['zmax']: 
+                print(Fore.RED + "WARNING: '" + cmdname + "': z-faces should not be inside PMLs" + Style.RESET_ALL)
+            assert w_min > 0 and w_max > 0 and w_num > 0, "wavelengths and the number of wavelengths should be strictly positive"
+            
+            # We now set the 6 faces of the cube
+
+            x_1 = xcenter + xplus
+            y_1 = ycenter + yplus
+            z_1 = zcenter + zplus
+
+            x_2 = xcenter + xplus
+            y_2 = ycenter - yminus
+            z_2 = zcenter - zminus
+
+            flux = Flux(G, 'x', 'plus', np.array([x_2, y_2, z_2]), np.array([x_1, y_1, z_1]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            x_3 = xcenter - xminus
+            y_3 = ycenter - yminus
+            z_3 = zcenter + zplus
+
+            flux = Flux(G, 'z', 'plus', np.array([x_3, y_3, z_3]), np.array([x_1, y_1, z_1]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            x_4 = xcenter - xminus
+            y_4 = ycenter - yminus
+            z_4 = zcenter - zminus
+
+            x_5 = xcenter - xminus
+            y_5 = ycenter + yplus
+            z_5 = zcenter + zplus
+
+            flux = Flux(G, 'x', 'minus', np.array([x_4, y_4, z_4]), np.array([x_5, y_5, z_5]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            x_6 = xcenter + xplus
+            y_6 = ycenter + yplus
+            z_6 = zcenter - zminus
+
+            flux = Flux(G, 'z', 'minus', np.array([x_4, y_4, z_4]), np.array([x_6, y_6, z_6]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            x_7 = xcenter + xplus
+            y_7 = ycenter - yminus
+            z_7 = zcenter + zplus
+
+            flux = Flux(G, 'y', 'minus', np.array([x_4, y_4, z_4]), np.array([x_7, y_7, z_7]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            x_8 = xcenter - xminus
+            y_8 = ycenter + yplus
+            z_8 = zcenter - zminus
+
+            flux = Flux(G, 'y', 'plus', np.array([x_8, y_8, z_8]), np.array([x_1, y_1, z_1]), np.linspace(w_min, w_max, w_num, dtype= floattype))
+            G.fluxes.append(flux)
+
+            G.box_fluxes_enumerate.append("" + cmdname + ': ' + ' '.join(tmp) + '. \n')
+
+    cmdname = '#plane_voltage_source'
+    if multicmds[cmdname] is not None:
+        from gprMax.Fluxes import Flux
+        for cmdinstance in multicmds[cmdname]:
+            tmp = cmdinstance.split()
+            if G.cylindrical:
+                raise CmdInputError(cmdname + " not yet supported with cylindrical coordinates")
+            if not (len(tmp) == 9 or len(tmp) == 11):
+                raise CmdInputError(cmdname + " requires exactly 9 parameters or 11 parameters")
+            component = tmp[0]
+            x1 = round_value(float(tmp[1]) / G.dx)
+            y1 = round_value(float(tmp[2]) / G.dy)
+            z1 = round_value(float(tmp[3]) / G.dz)
+            
+            x2 = round_value(float(tmp[4]) / G.dx)
+            y2 = round_value(float(tmp[5]) / G.dy)
+            z2 = round_value(float(tmp[6]) / G.dz)
+
+            r = float(tmp[7])
+
+            waveform = tmp[8]
+
+            start = 0
+            stop = G.timewindow
+
+            if len(tmp) == 11:
+                start = float(tmp[9])
+                stop = float(tmp[10])
+
+            assert x1 <= x2 and y1 <= y2 and z1 <= z2, CmdInputError(cmdname + ": coordinates must verify x1 <= x2, y1 <= y2 and z1 <= z2")
+
+            assert x1 >= 0 and y1 >= 0 and z1 >= 0 and x2 <= G.nx and y2 <= G.ny and z2 <= G.nz, CmdInputError(cmdname + " must be within the domain bounds")
+
+            assert x1 == x2 or y1 == y2 or z1 == z2, CmdInputError(cmdname + " must be at most a surface, not a volume.")
+
+            if x1 == x2:
+                if G.pmlthickness['x0'] >= x1 or G.nx - G.pmlthickness['xmax'] <= x1:
+                    raise CmdInputError("The whole source plane cannot be included in PMLs !")
+            elif y1 == y2:
+                if G.pmlthickness['y0'] >= y1 or G.ny - G.pmlthickness['ymax'] <= y1:
+                    raise CmdInputError("The whole source plane cannot be included in PMLs !")
+            elif z1 == z2:
+                if G.pmlthickness['z0'] >= z1 or G.nz - G.pmlthickness['zmax'] <= z1:
+                    raise CmdInputError("The whole source plane cannot be included in PMLs !")
+
+            if x1 >= G.pmlthickness['x0'] and x2 <= G.nx - G.pmlthickness['xmax'] and y1 >= G.pmlthickness['y0'] and y2 <= G.ny - G.pmlthickness['ymax'] and z1 >= G.pmlthickness['z0'] and z2 <= G.nz - G.pmlthickness['zmax']:
+                print(Fore.RED + "WARNING: '" + cmdname + "' shouldn't be inside pmls;" + Style.RESET_ALL)
+
+            assert r >= 0, CmdInputError(cmdname + " requires a positive source resistance")
+
+             # Check if there is a waveformID in the waveforms list
+            if not any(x.ID == waveform for x in G.waveforms):
+                raise CmdInputError("'" + cmdname + ': ' + ' '.join(tmp) + "'" + ' there is no waveform with the identifier {}'.format(waveform))
+                
+            X = np.arange(x1, x2) if x1 != x2 else [x1]
+            Y = np.arange(y1, y2) if y1 != y2 else [y1]
+            Z = np.arange(z1, z2) if z1 != z2 else [z1]
+
+            for i in X:
+                for j in Y:
+                    for k in Z:
+                        v = VoltageSource()
+                        v.polarisation = component
+                        v.xcoord = i
+                        v.ycoord = j
+                        v.zcoord = k
+                        v.ID = v.__class__.__name__ + '(' + str(v.xcoord) + ',' + str(v.ycoord) + ',' + str(v.zcoord) + ')'
+                        v.waveformID = waveform
+                        v.resistance = r
+                        G.voltagesources.append(v)
+                        v.start = start
+                        v.stop = stop
+                        v.calculate_waveform_values(G)

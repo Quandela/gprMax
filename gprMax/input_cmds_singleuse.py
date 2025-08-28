@@ -110,115 +110,131 @@ def process_singlecmds(singlecmds, G):
     if G.messages:
         if G.gpu is not None:
             print('GPU solving using: {} - {}'.format(G.gpu.deviceID, G.gpu.name))
+    
     #Cylindrical symmetry
     cmd = '#cylindrical'
-    tmp = [x for x in singlecmds[cmd].split()]
-    if len(tmp) != 1:
-        raise CmdInputError(cmd + ' requires exactly one parameter')
-    elif tmp[0] not in ['True', 'False']:
-        raise CmdInputError(cmd + ' requires input values of either True or False')
+    if singlecmds[cmd] is not None:
+        tmp = [x for x in singlecmds[cmd].split()]
+        if len(tmp) != 1:
+            raise CmdInputError(cmd + ' requires exactly one parameter')
+        elif tmp[0] not in ['True', 'False']:
+            raise CmdInputError(cmd + ' requires input values of either True or False')
+        else:
+            G.cylindrical = bool(tmp[0])
     else:
-        G.cylindrical = bool(tmp[0])
+        G.cylindrical = False
 
     #Saptial discretisation if cylindrical
     if G.cylindrical:
         cmd = '#dr_dz'
-        tmp = [float(x) for x in singlecmds[cmd].split()]
-        if len(tmp) != 2:
-            raise CmdInputError(cmd + ' requires exactly two parameters')
-        elif tmp[0] < 0:
-            raise CmdInputError(cmd + ' requires the r-coordinate to be greater than 0')
-        elif tmp[1] < 0:
-            raise CmdInputError(cmd + ' requires the z-coordinate to be greater than 0')
-        else:
-            G.dr_cyl = tmp[0]
-            G.dz_cyl = tmp[1]
-        if G.messages:
-            print('Spatial discretisation: {:g} x {:g} m'.format(G.dr_cyl, G.dz_cyl))
+        if singlecmds[cmd] is not None:
+            tmp = [float(x) for x in singlecmds[cmd].split()]
+            if len(tmp) != 2:
+                raise CmdInputError(cmd + ' requires exactly two parameters')
+            elif tmp[0] < 0:
+                raise CmdInputError(cmd + ' requires the r-coordinate to be greater than 0')
+            elif tmp[1] < 0:
+                raise CmdInputError(cmd + ' requires the z-coordinate to be greater than 0')
+            else:
+                G.dr_cyl = tmp[0]
+                G.dz_cyl = tmp[1]
+            if G.messages:
+                print('Spatial discretisation: {:g} x {:g} m'.format(G.dr_cyl, G.dz_cyl))
 
-        # Domain cylindrical
-        cmd = '#domain_cyl'
-        tmp = [float(x) for x in singlecmds[cmd].split()]
-        if len(tmp) != 2:
-            raise CmdInputError(cmd + ' requires exactly two parameters')
-        elif tmp[0] < 0:
-            raise CmdInputError(cmd + ' requires the r-coordinate to be greater than 0')
-        elif tmp[1] < 0:
-            raise CmdInputError(cmd + ' requires the z-coordinate to be greater than 0')
+            # Domain cylindrical
+            cmd = '#domain_cyl'
+            tmp = [float(x) for x in singlecmds[cmd].split()]
+            if len(tmp) != 2:
+                raise CmdInputError(cmd + ' requires exactly two parameters')
+            elif tmp[0] < 0:
+                raise CmdInputError(cmd + ' requires the r-coordinate to be greater than 0')
+            elif tmp[1] < 0:
+                raise CmdInputError(cmd + ' requires the z-coordinate to be greater than 0')
+            else:
+                G.nr_cyl = round_value(tmp[0] / G.dr_cyl)
+                G.nz_cyl = round_value(tmp[1] / G.dz_cyl)
+            if G.messages:
+                print('Domain size: {:g} x {:g} m ({:d} x {:d} = {:g} cells)'.format(tmp[0], tmp[1],
+                                                                                                G.nr_cyl, G.nz_cyl,
+                                                                                              (G.nr_cyl * G.nz_cyl)))
         else:
-            G.nr_cyl = round_value(tmp[0] / G.dr_cyl)
-            G.nz_cyl = round_value(tmp[1] / G.dz_cyl)
-        if G.messages:
-            print('Domain size: {:g} x {:g} m ({:d} x {:d} = {:g} cells)'.format(tmp[0], tmp[1],
-                                                                                              G.nx_cyl, G.nz_cyl,
-                                                                                              (G.nx_cyl * G.nz_cyl)))
-
+            raise CmdInputError(cmd + ' is required for 3D models in cylindrical coordinates')
         # m
         cmd = '#m'
-        tmp = [int(x) for x in singlecmds[cmd].split()]
-        if len(tmp) != 1:
-            raise CmdInputError(cmd + ' requires exactly one parameter')
+        if singlecmds[cmd] is not None:
+            tmp = [int(x) for x in singlecmds[cmd].split()]
+            if len(tmp) != 1:
+                raise CmdInputError(cmd + ' requires exactly one parameter')
+            else:
+                G.m_cyl = tmp[0]
         else:
-            G.m_cyl = tmp[0]
+            raise CmdInputError(cmd + ' is required for 3D models in cylindrical coordinates')
 
 
     # Spatial discretisation
     cmd = '#dx_dy_dz'
-    tmp = [float(x) for x in singlecmds[cmd].split()]
-    if G.cylindrical and len(tmp) != 0:
-        raise CmdInputError(cmd + ' cannot be used with cylindrical')
-    if len(tmp) != 3:
-        raise CmdInputError(cmd + ' requires exactly three parameters')
-    if tmp[0] <= 0:
-        raise CmdInputError(cmd + ' requires the x-direction spatial step to be greater than zero')
-    if tmp[1] <= 0:
-        raise CmdInputError(cmd + ' requires the y-direction spatial step to be greater than zero')
-    if tmp[2] <= 0:
-        raise CmdInputError(cmd + ' requires the z-direction spatial step to be greater than zero')
-    G.dx = tmp[0]
-    G.dy = tmp[1]
-    G.dz = tmp[2]
-    if G.messages:
-        print('Spatial discretisation: {:g} x {:g} x {:g}m'.format(G.dx, G.dy, G.dz))
+    if singlecmds[cmd] is not None:
+        if G.cylindrical and len(tmp) != 0:
+            raise CmdInputError(cmd + ' cannot be used with cylindrical')
+        tmp = [float(x) for x in singlecmds[cmd].split()]
+        if len(tmp) != 3:
+            raise CmdInputError(cmd + ' requires exactly three parameters')
+        if tmp[0] <= 0:
+            raise CmdInputError(cmd + ' requires the x-direction spatial step to be greater than zero')
+        if tmp[1] <= 0:
+            raise CmdInputError(cmd + ' requires the y-direction spatial step to be greater than zero')
+        if tmp[2] <= 0:
+            raise CmdInputError(cmd + ' requires the z-direction spatial step to be greater than zero')
+        G.dx = tmp[0]
+        G.dy = tmp[1]
+        G.dz = tmp[2]
+        if G.messages:
+            print('Spatial discretisation: {:g} x {:g} x {:g}m'.format(G.dx, G.dy, G.dz))
+    elif singlecmds[cmd] is None and not G.cylindrical:
+        raise CmdInputError(cmd + ' is required for 3D models in cartesian coordinates')
 
     # Domain
     cmd = '#domain'
-    tmp = [float(x) for x in singlecmds[cmd].split()]
-    if G.cylindrical and len(tmp) != 0:
-        raise CmdInputError(cmd + ' cannot be used with cylindrical')
-    if len(tmp) != 3:
-        raise CmdInputError(cmd + ' requires exactly three parameters')
-    G.nx = round_value(tmp[0] / G.dx)
-    G.ny = round_value(tmp[1] / G.dy)
-    G.nz = round_value(tmp[2] / G.dz)
-    if G.nx == 0 or G.ny == 0 or G.nz == 0:
-        raise CmdInputError(cmd + ' requires at least one cell in every dimension')
-    if G.messages:
-        print('Domain size: {:g} x {:g} x {:g}m ({:d} x {:d} x {:d} = {:g} cells)'.format(tmp[0], tmp[1], tmp[2], G.nx, G.ny, G.nz, (G.nx * G.ny * G.nz)))
+    if singlecmds[cmd] is not None:
+        if G.cylindrical:
+            raise CmdInputError(cmd + ' cannot be used with cylindrical')
+        tmp = [float(x) for x in singlecmds[cmd].split()]
+        if len(tmp) != 3:
+            raise CmdInputError(cmd + ' requires exactly three parameters')
+        G.nx = round_value(tmp[0] / G.dx)
+        G.ny = round_value(tmp[1] / G.dy)
+        G.nz = round_value(tmp[2] / G.dz)
+        if G.nx == 0 or G.ny == 0 or G.nz == 0:
+            raise CmdInputError(cmd + ' requires at least one cell in every dimension')
+        if G.messages:
+            print('Domain size: {:g} x {:g} x {:g}m ({:d} x {:d} x {:d} = {:g} cells)'.format(tmp[0], tmp[1], tmp[2], G.nx, G.ny, G.nz, (G.nx * G.ny * G.nz)))
+    elif singlecmds[cmd] is None and not G.cylindrical:
+        raise CmdInputError(cmd + ' is required for 3D models in cartesian coordinates')
 
     # Time step CFL limit (either 2D or 3D); switch off appropriate PMLs for 2D
     if G.cylindrical:
-        G.dt = 1 / (c * np.sqrt((1 / G.dr) * (1 / G.dr) + (1 / G.dz) * (1 / G.dz)))
+        G.dt = 1 / (c * np.sqrt(2*(1 / G.dr_cyl) * (1 / G.dr_cyl) + (1 / G.dz_cyl) * (1 / G.dz_cyl)))
         G.mode = 'Cylindrical'
         ### Ajouter les conditions sur les PMLs
-    if G.nx == 1:
-        G.dt = 1 / (c * np.sqrt((1 / G.dy) * (1 / G.dy) + (1 / G.dz) * (1 / G.dz)))
-        G.mode = '2D TMx'
-        G.pmlthickness['x0'] = 0
-        G.pmlthickness['xmax'] = 0
-    elif G.ny == 1:
-        G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dz) * (1 / G.dz)))
-        G.mode = '2D TMy'
-        G.pmlthickness['y0'] = 0
-        G.pmlthickness['ymax'] = 0
-    elif G.nz == 1:
-        G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dy) * (1 / G.dy)))
-        G.mode = '2D TMz'
-        G.pmlthickness['z0'] = 0
-        G.pmlthickness['zmax'] = 0
     else:
-        G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dy) * (1 / G.dy) + (1 / G.dz) * (1 / G.dz)))
-        G.mode = '3D'
+        if G.nx == 1:
+            G.dt = 1 / (c * np.sqrt((1 / G.dy) * (1 / G.dy) + (1 / G.dz) * (1 / G.dz)))
+            G.mode = '2D TMx'
+            G.pmlthickness['x0'] = 0
+            G.pmlthickness['xmax'] = 0
+        elif G.ny == 1:
+            G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dz) * (1 / G.dz)))
+            G.mode = '2D TMy'
+            G.pmlthickness['y0'] = 0
+            G.pmlthickness['ymax'] = 0
+        elif G.nz == 1:
+            G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dy) * (1 / G.dy)))
+            G.mode = '2D TMz'
+            G.pmlthickness['z0'] = 0
+            G.pmlthickness['zmax'] = 0
+        else:
+            G.dt = 1 / (c * np.sqrt((1 / G.dx) * (1 / G.dx) + (1 / G.dy) * (1 / G.dy) + (1 / G.dz) * (1 / G.dz)))
+            G.mode = '3D'
 
     # Round down time step to nearest float with precision one less than hardware maximum.
     # Avoids inadvertently exceeding the CFL due to binary representation of floating point number.
@@ -267,7 +283,6 @@ def process_singlecmds(singlecmds, G):
 
     # PML cells
     cmd = '#pml_cells'
-###Ajouter le cas cylindrique
     if singlecmds[cmd] is not None:
         tmp = singlecmds[cmd].split()
         if not G.cylindrical:
@@ -286,15 +301,18 @@ def process_singlecmds(singlecmds, G):
             if 2 * G.pmlthickness['x0'] >= G.nx or 2 * G.pmlthickness['y0'] >= G.ny or 2 * G.pmlthickness['z0'] >= G.nz or 2 * G.pmlthickness['xmax'] >= G.nx or 2 * G.pmlthickness['ymax'] >= G.ny or 2 * G.pmlthickness['zmax'] >= G.nz:
                 raise CmdInputError(cmd + ' has too many cells for the domain size')
         else:
-            if len(tmp) != 1 and len(tmp) != 3:
-                raise CmdInputError(cmd + ' requires either one or three parameter(s) in cylindrical coordinate')
+            if len(tmp) != 1 and len(tmp) != 2:
+                raise CmdInputError(cmd + ' requires either one or 2 parameter(s) in cylindrical coordinate')
             if len(tmp) == 1:
+                if int(tmp[0]) < 2:
+                    raise CmdInputError("The PML thickness in cylindrical coordinates should be greater than 1")
                 for key in G.pmlthickness_cyl.keys():
                     G.pmlthickness_cyl[key] = int(tmp[0])
             else:
-                G.pmlthickness_cyl['rmax'] = int(tmp[0])
-                G.pmlthickness_cyl['z0'] = int(tmp[1])
-                G.pmlthickness_cyl['zmax'] = int(tmp[2])
+                if int(tmp[0]) < 2 or int(tmp[1]) < 2:
+                    raise CmdInputError("The PML thickness in cylindrical coordinates should be greater than 1")
+                G.pmlthickness_cyl['r'] = int(tmp[0])
+                G.pmlthickness_cyl['z'] = int(tmp[1])
 
 
     # PML formulation

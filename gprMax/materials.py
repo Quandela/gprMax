@@ -72,14 +72,29 @@ class Material(object):
         Args:
             G (class): Grid class instance - holds essential parameters describing the model.
         """
+        if not G.cylindrical:
+            HA = (m0 * self.mr / G.dt) + 0.5 * self.sm
+            HB = (m0 * self.mr / G.dt) - 0.5 * self.sm
+            self.DA = HB / HA
+            self.DBx = (1 / G.dx) * 1 / HA
+            self.DBy = (1 / G.dy) * 1 / HA
+            self.DBz = (1 / G.dz) * 1 / HA
+            self.srcm = 1 / HA
+        else:
+            assert G.cylindrical, "Can't call calculate_update_coeffsH with cylindrical if not in G.cylindrical"
+            # HA = (m0 * self.mr / G.dt) + 0.5 * self.sm #Same as in cartesian
+            # HB = (m0 * self.mr / G.dt) - 0.5 * self.sm #Same as in cartesian
+            # self.DA = HB / HA #Same as in cartesian
+            # self.DBr = (1 / G.dr_cyl) * 1 / HA
+            # self.DBphi = 1 #Symmetry --> im/r
+            # self.DBz = (1 / G.dz_cyl) * 1 / HA 
+            # self.srcm = 1 / HA
+            self.DA = HB / HA #Same as in cartesian
+            self.DBr = G.dt/(self.mr * m0 * G.dr_cyl)
+            self.DBphi = G.dt/(m0 * self.mr * G.dphi_cyl * G.dr_cyl)
+            self.DBz = G.dt/(self.mr * m0 * G.dz_cyl)
+            self.srcm = 1 / HA
 
-        HA = (m0 * self.mr / G.dt) + 0.5 * self.sm
-        HB = (m0 * self.mr / G.dt) - 0.5 * self.sm
-        self.DA = HB / HA
-        self.DBx = (1 / G.dx) * 1 / HA
-        self.DBy = (1 / G.dy) * 1 / HA
-        self.DBz = (1 / G.dz) * 1 / HA
-        self.srcm = 1 / HA
 
     def calculate_update_coeffsE(self, G):
         """Calculates the electric update coefficients of the material.
@@ -91,56 +106,79 @@ class Material(object):
 
         # The implementation of the dispersive material modelling comes from the
         # derivation in: http://dx.doi.org/10.1109/TAP.2014.2308549
-        if self.maxpoles > 0:
-            self.w = np.zeros(self.maxpoles, dtype=complextype)
-            self.q = np.zeros(self.maxpoles, dtype=complextype)
-            self.zt = np.zeros(self.maxpoles, dtype=complextype)
-            self.zt2 = np.zeros(self.maxpoles, dtype=complextype)
-            self.eqt = np.zeros(self.maxpoles, dtype=complextype)
-            self.eqt2 = np.zeros(self.maxpoles, dtype=complextype)
+        if not G.cylindrical:
+            if self.maxpoles > 0:
+                self.w = np.zeros(self.maxpoles, dtype=complextype)
+                self.q = np.zeros(self.maxpoles, dtype=complextype)
+                self.zt = np.zeros(self.maxpoles, dtype=complextype)
+                self.zt2 = np.zeros(self.maxpoles, dtype=complextype)
+                self.eqt = np.zeros(self.maxpoles, dtype=complextype)
+                self.eqt2 = np.zeros(self.maxpoles, dtype=complextype)
 
-            for x in range(self.poles):
-                if 'debye' in self.type:
-                    self.w[x] = self.deltaer[x] / self.tau[x]
-                    self.q[x] = -1 / self.tau[x]
-                elif 'lorentz' in self.type:
-                    # tau for Lorentz materials are pole frequencies
-                    # alpha for Lorentz materials are the damping coefficients
-                    wp2 = (2 * np.pi * self.tau[x])**2
-                    self.w[x] = -1j * ((wp2 * self.deltaer[x]) / np.sqrt(wp2 - self.alpha[x]**2))
-                    self.q[x] = -self.alpha[x] + (1j * np.sqrt(wp2 - self.alpha[x]**2))
-                elif 'drude' in self.type:
-                    # tau for Drude materials are pole frequencies
-                    # alpha for Drude materials are the inverse of relaxation times
-                    wp2 = (2 * np.pi * self.tau[x])**2
-                    self.se += wp2 / self.alpha[x]
-                    self.w[x] = - (wp2 / self.alpha[x])
-                    self.q[x] = - self.alpha[x]
+                for x in range(self.poles):
+                    if 'debye' in self.type:
+                        self.w[x] = self.deltaer[x] / self.tau[x]
+                        self.q[x] = -1 / self.tau[x]
+                    elif 'lorentz' in self.type:
+                        # tau for Lorentz materials are pole frequencies
+                        # alpha for Lorentz materials are the damping coefficients
+                        wp2 = (2 * np.pi * self.tau[x])**2
+                        self.w[x] = -1j * ((wp2 * self.deltaer[x]) / np.sqrt(wp2 - self.alpha[x]**2))
+                        self.q[x] = -self.alpha[x] + (1j * np.sqrt(wp2 - self.alpha[x]**2))
+                    elif 'drude' in self.type:
+                        # tau for Drude materials are pole frequencies
+                        # alpha for Drude materials are the inverse of relaxation times
+                        wp2 = (2 * np.pi * self.tau[x])**2
+                        self.se += wp2 / self.alpha[x]
+                        self.w[x] = - (wp2 / self.alpha[x])
+                        self.q[x] = - self.alpha[x]
 
-                self.eqt[x] = np.exp(self.q[x] * G.dt)
-                self.eqt2[x] = np.exp(self.q[x] * (G.dt / 2))
-                self.zt[x] = (self.w[x] / self.q[x]) * (1 - self.eqt[x]) / G.dt
-                self.zt2[x] = (self.w[x] / self.q[x]) * (1 - self.eqt2[x])
+                    self.eqt[x] = np.exp(self.q[x] * G.dt)
+                    self.eqt2[x] = np.exp(self.q[x] * (G.dt / 2))
+                    self.zt[x] = (self.w[x] / self.q[x]) * (1 - self.eqt[x]) / G.dt
+                    self.zt2[x] = (self.w[x] / self.q[x]) * (1 - self.eqt2[x])
 
-            EA = (e0 * self.er / G.dt) + 0.5 * self.se - (e0 / G.dt) * np.sum(self.zt2.real)
-            EB = (e0 * self.er / G.dt) - 0.5 * self.se - (e0 / G.dt) * np.sum(self.zt2.real)
+                EA = (e0 * self.er / G.dt) + 0.5 * self.se - (e0 / G.dt) * np.sum(self.zt2.real)
+                EB = (e0 * self.er / G.dt) - 0.5 * self.se - (e0 / G.dt) * np.sum(self.zt2.real)
 
+            else:
+                EA = (e0 * self.er / G.dt) + 0.5 * self.se
+                EB = (e0 * self.er / G.dt) - 0.5 * self.se
+
+            if self.ID == 'pec' or self.se == float('inf'):
+                self.CA = 0
+                self.CBx = 0
+                self.CBy = 0
+                self.CBz = 0
+                self.srce = 0
+            else:
+                self.CA = EB / EA
+                self.CBx = (1 / G.dx) * 1 / EA
+                self.CBy = (1 / G.dy) * 1 / EA
+                self.CBz = (1 / G.dz) * 1 / EA
+                self.srce = 1 / EA
         else:
+            assert G.cylindrical, "Can't call calculate_update_coeffsH_cyl if not in cylindrical"
+            assert self.maxpoles == 0, "Dispersive materials not yet implemented in cylindrical coordinates"
             EA = (e0 * self.er / G.dt) + 0.5 * self.se
             EB = (e0 * self.er / G.dt) - 0.5 * self.se
-
-        if self.ID == 'pec' or self.se == float('inf'):
-            self.CA = 0
-            self.CBx = 0
-            self.CBy = 0
-            self.CBz = 0
-            self.srce = 0
-        else:
-            self.CA = EB / EA
-            self.CBx = (1 / G.dx) * 1 / EA
-            self.CBy = (1 / G.dy) * 1 / EA
-            self.CBz = (1 / G.dz) * 1 / EA
-            self.srce = 1 / EA
+            if self.ID == 'pec' or self.se == float('inf'):
+                self.CA = 0
+                self.CBr = 0
+                self.CBphi = 0
+                self.CBz = 0
+                self.srce = 0
+            else:
+                # self.CA = EB / EA
+                # self.CBr = (1 / G.dr_cyl) * 1 / EA
+                # self.CBphi = 1
+                # self.CBz = (1 / G.dz_cyl) * 1 / EA
+                # self.srce = 1 / EA
+                self.CA = EB / EA
+                self.CBr = (1 / G.dr_cyl) * 1 / EA
+                self.CBphi = (1 / G.dphi_cyl) * 1 / EA
+                self.CBz = (1 / G.dz_cyl) * 1 / EA
+                self.srce = 1 / EA
 
     def calculate_er(self, freq):
         """
@@ -197,11 +235,17 @@ def process_materials(G):
         material.calculate_update_coeffsH(G)
 
         # Store all update coefficients together
-        G.updatecoeffsE[material.numID, :] = material.CA, material.CBx, material.CBy, material.CBz, material.srce
-        G.updatecoeffsH[material.numID, :] = material.DA, material.DBx, material.DBy, material.DBz, material.srcm
+        if not G.cylindrical:
+            G.updatecoeffsE[material.numID, :] = material.CA, material.CBx, material.CBy, material.CBz, material.srce
+            G.updatecoeffsH[material.numID, :] = material.DA, material.DBx, material.DBy, material.DBz, material.srcm
+        else:
+            assert G.cylindrical, "Can't call calculate_update_coeffsH_cyl if not in cylindrical"
+            G.updatecoeffsE[material.numID, :] = material.CA, material.CBr, material.CBphi, material.CBz, material.srce
+            G.updatecoeffsH[material.numID, :] = material.DA, material.DBr, material.DBphi, material.DBz, material.srcm
 
         # Store coefficients for any dispersive materials
         if Material.maxpoles > 0:
+            assert not G.cylindrical, "Dispersive materials not yet implemented in cylindrical coordinates"
             z = 0
             for pole in range(Material.maxpoles):
                 G.updatecoeffsdispersive[material.numID, z:z + 3] = e0 * material.eqt2[pole], material.eqt[pole], material.zt[pole]
