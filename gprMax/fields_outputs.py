@@ -108,8 +108,6 @@ def write_hdf5_outputfile(outputfile, G):
     nsrc = len(G.voltagesources + G.hertziandipoles + G.magneticdipoles + G.transmissionlines)
     f.attrs['nsrc'] = nsrc
     f.attrs['nrx'] = len(G.rxs)
-    f.attrs['srcsteps'] = G.srcsteps
-    f.attrs['rxsteps'] = G.rxsteps
 
     # Create group for sources (except transmission lines); add type and positional data attributes
     srclist = G.voltagesources + G.hertziandipoles + G.magneticdipoles

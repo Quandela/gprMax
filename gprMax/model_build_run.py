@@ -43,14 +43,9 @@ from gprMax.fields_outputs import write_hdf5_outputfile
 
 from gprMax.fields_updates_ext import update_electric
 from gprMax.fields_updates_ext import update_magnetic
-from gprMax.fields_updates_ext import update_electric_dispersive_multipole_A
-from gprMax.fields_updates_ext import update_electric_dispersive_multipole_B
-from gprMax.fields_updates_ext import update_electric_dispersive_1pole_A
-from gprMax.fields_updates_ext import update_electric_dispersive_1pole_B
 from gprMax.fields_updates_gpu import kernels_template_fields
 
 from gprMax.grid import FDTDGrid
-from gprMax.grid import dispersion_analysis
 
 from gprMax.input_cmds_geometry import process_geometrycmds
 from gprMax.input_cmds_file import process_python_include_code
@@ -255,17 +250,6 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
         # Initialise arrays of update coefficients to pass to update functions
         G.initialise_std_update_coeff_arrays()
 
-        # Initialise arrays of update coefficients and temporary values if
-        # there are any dispersive materials
-        if Material.maxpoles != 0:
-            # Update estimated memory (RAM) usage
-            G.memoryusage += int(3 * Material.maxpoles * (G.nx + 1) * (G.ny + 1) * (G.nz + 1) * np.dtype(complextype).itemsize)
-            G.memory_check()
-            if G.messages:
-                print('\nMemory (RAM) required - updated (dispersive): ~{}\n'.format(human_size(G.memoryusage)))
-
-            G.initialise_dispersive_arrays()
-
         # Check there is sufficient memory to store any snapshots
         if G.snapshots:
             snapsmemsize = 0
@@ -287,17 +271,6 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
             materialstable.justify_columns[0] = 'right'
             print(materialstable.table)
 
-        # Check to see if numerical dispersion might be a problem
-        results = dispersion_analysis(G)
-        if results['error'] and G.messages:
-            print(Fore.RED + "\nWARNING: Numerical dispersion analysis not carried out as {}".format(results['error']) + Style.RESET_ALL)
-        elif results['N'] < G.mingridsampling:
-            raise GeneralError("Non-physical wave propagation: Material '{}' has wavelength sampled by {} cells, less than required minimum for physical wave propagation. Maximum significant frequency estimated as {:g}Hz".format(results['material'].ID, results['N'], results['maxfreq']))
-        elif results['deltavp'] and np.abs(results['deltavp']) > G.maxnumericaldisp and G.messages:
-            print(Fore.RED + "\nWARNING: Potentially significant numerical dispersion. Estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']) + Style.RESET_ALL)
-        elif results['deltavp'] and G.messages:
-            print("\nNumerical dispersion analysis: estimated largest physical phase-velocity error is {:.2f}% in material '{}' whose wavelength sampled by {} cells. Maximum significant frequency estimated as {:g}Hz".format(results['deltavp'], results['material'].ID, results['N'], results['maxfreq']))
-
     # If geometry information to be reused between model runs
     else:
         inputfilestr = '\n--- Model {}/{}, input file (not re-processed, i.e. geometry fixed): {}'.format(currentmodelrun, modelend, inputfile.name)
@@ -311,24 +284,6 @@ def run_model(args, currentmodelrun, modelend, numbermodelruns, inputfile, usern
             # Clear arrays for fields in PML
             for pml in G.pmls:
                 pml.initialise_field_arrays()
-
-    # Adjust position of simple sources and receivers if required
-    if G.srcsteps[0] != 0 or G.srcsteps[1] != 0 or G.srcsteps[2] != 0:
-        for source in itertools.chain(G.hertziandipoles, G.magneticdipoles):
-            if currentmodelrun == 1:
-                if source.xcoord + G.srcsteps[0] * modelend < 0 or source.xcoord + G.srcsteps[0] * modelend > G.nx or source.ycoord + G.srcsteps[1] * modelend < 0 or source.ycoord + G.srcsteps[1] * modelend > G.ny or source.zcoord + G.srcsteps[2] * modelend < 0 or source.zcoord + G.srcsteps[2] * modelend > G.nz:
-                    raise GeneralError('Source(s) will be stepped to a position outside the domain.')
-            source.xcoord = source.xcoordorigin + (currentmodelrun - 1) * G.srcsteps[0]
-            source.ycoord = source.ycoordorigin + (currentmodelrun - 1) * G.srcsteps[1]
-            source.zcoord = source.zcoordorigin + (currentmodelrun - 1) * G.srcsteps[2]
-    if G.rxsteps[0] != 0 or G.rxsteps[1] != 0 or G.rxsteps[2] != 0:
-        for receiver in G.rxs:
-            if currentmodelrun == 1:
-                if receiver.xcoord + G.rxsteps[0] * modelend < 0 or receiver.xcoord + G.rxsteps[0] * modelend > G.nx or receiver.ycoord + G.rxsteps[1] * modelend < 0 or receiver.ycoord + G.rxsteps[1] * modelend > G.ny or receiver.zcoord + G.rxsteps[2] * modelend < 0 or receiver.zcoord + G.rxsteps[2] * modelend > G.nz:
-                    raise GeneralError('Receiver(s) will be stepped to a position outside the domain.')
-            receiver.xcoord = receiver.xcoordorigin + (currentmodelrun - 1) * G.rxsteps[0]
-            receiver.ycoord = receiver.ycoordorigin + (currentmodelrun - 1) * G.rxsteps[1]
-            receiver.zcoord = receiver.zcoordorigin + (currentmodelrun - 1) * G.rxsteps[2]
 
     # Write files for any geometry views and geometry object outputs
     if not (G.geometryviews or G.geometryobjectswrite) and args.geometry_only and G.messages:
@@ -477,14 +432,7 @@ def solve_cpu(currentmodelrun, modelend, G: FDTDGrid):
 
         # Update electric field components
         # All materials are non-dispersive so do standard update
-        if Material.maxpoles == 0:
-            update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
-        # If there are any dispersive materials do 1st part of dispersive update
-        # (it is split into two parts as it requires present and updated electric field values).
-        elif Material.maxpoles == 1:
-            update_electric_dispersive_1pole_A(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
-        elif Material.maxpoles > 1:
-            update_electric_dispersive_multipole_A(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+        update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
 
         # Update electric field components with the PML correction
         for pml in G.pmls:
@@ -494,15 +442,6 @@ def solve_cpu(currentmodelrun, modelend, G: FDTDGrid):
         for source in G.voltagesources + G.transmissionlines + G.hertziandipoles:
             source.update_electric(iteration, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G)
 
-        # If there are any dispersive materials do 2nd part of dispersive update
-        # (it is split into two parts as it requires present and updated electric
-        # field values). Therefore it can only be completely updated after the
-        # electric field has been updated by the PML and source updates.
-        if Material.maxpoles == 1:
-            update_electric_dispersive_1pole_B(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
-        elif Material.maxpoles > 1:
-            update_electric_dispersive_multipole_B(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
-        
         for flux in G.fluxes:
             flux.save_fields_fluxes(G, iteration)
 
@@ -538,11 +477,7 @@ def solve_gpu(currentmodelrun, modelend, G):
     dev = drv.Device(G.gpu.deviceID)
     ctx = dev.make_context()
 
-    # Electric and magnetic field updates - prepare kernels, and get kernel functions
-    if Material.maxpoles > 0:
-        kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=G.updatecoeffsdispersive.shape[1], NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=G.Tx.shape[1], NY_T=G.Tx.shape[2], NZ_T=G.Tx.shape[3]), options=compiler_opts)
-    else:   # Set to one any substitutions for dispersive materials
-        kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=1, NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=1, NY_T=1, NZ_T=1), options=compiler_opts)
+    kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=1, NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=1, NY_T=1, NZ_T=1), options=compiler_opts)
     update_e_gpu = kernels_fields.get_function("update_e")
     update_h_gpu = kernels_fields.get_function("update_h")
 
@@ -554,12 +489,6 @@ def solve_gpu(currentmodelrun, modelend, G):
     else:
         drv.memcpy_htod(updatecoeffsE, G.updatecoeffsE)
         drv.memcpy_htod(updatecoeffsH, G.updatecoeffsH)
-
-    # Electric and magnetic field updates - dispersive materials - get kernel functions and initialise array on GPU
-    if Material.maxpoles > 0:  # If there are any dispersive materials (updates are split into two parts as they require present and updated electric field values).
-        update_e_dispersive_A_gpu = kernels_fields.get_function("update_e_dispersive_A")
-        update_e_dispersive_B_gpu = kernels_fields.get_function("update_e_dispersive_B")
-        G.gpu_initialise_dispersive_arrays()
 
     # Electric and magnetic field updates - set blocks per grid and initialise field arrays on GPU
     G.gpu_set_blocks_per_grid()
@@ -709,15 +638,6 @@ def solve_gpu(currentmodelrun, modelend, G):
                          G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
                          G.Hx_gpu.gpudata, G.Hy_gpu.gpudata, G.Hz_gpu.gpudata,
                          block=G.tpb, grid=G.bpg)
-        # If there are any dispersive materials do 1st part of dispersive update
-        # (it is split into two parts as it requires present and updated electric field values).
-        else:
-            update_e_dispersive_A_gpu(np.int32(G.nx), np.int32(G.ny), np.int32(G.nz),
-                                      np.int32(Material.maxpoles), G.updatecoeffsdispersive_gpu.gpudata,
-                                      G.Tx_gpu.gpudata, G.Ty_gpu.gpudata, G.Tz_gpu.gpudata, G.ID_gpu.gpudata,
-                                      G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
-                                      G.Hx_gpu.gpudata, G.Hy_gpu.gpudata, G.Hz_gpu.gpudata,
-                                      block=G.tpb, grid=G.bpg)
 
         # Update electric field components with the PML correction
         for pml in G.pmls:
@@ -740,14 +660,6 @@ def solve_gpu(currentmodelrun, modelend, G):
                                        srcwaves_hertzian_gpu.gpudata, G.ID_gpu.gpudata,
                                        G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
                                        block=(1, 1, 1), grid=(round32(len(G.hertziandipoles)), 1, 1))
-
-        # If there are any dispersive materials do 2nd part of dispersive update (it is split into two parts as it requires present and updated electric field values). Therefore it can only be completely updated after the electric field has been updated by the PML and source updates.
-        if Material.maxpoles > 0:
-            update_e_dispersive_B_gpu(np.int32(G.nx), np.int32(G.ny), np.int32(G.nz),
-                                      np.int32(Material.maxpoles), G.updatecoeffsdispersive_gpu.gpudata,
-                                      G.Tx_gpu.gpudata, G.Ty_gpu.gpudata, G.Tz_gpu.gpudata, G.ID_gpu.gpudata,
-                                      G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
-                                      block=G.tpb, grid=G.bpg)
             
         for i in range(len(G.fluxes)):
             G.fluxes[i].save_fields_fluxes(G, iteration, save_fields_fluxes_gpu[i])

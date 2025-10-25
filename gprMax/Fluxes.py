@@ -18,10 +18,6 @@ init()
 from gprMax.fields_outputs import store_outputs
 from gprMax.fields_updates_ext import update_electric
 from gprMax.fields_updates_ext import update_magnetic
-from gprMax.fields_updates_ext import update_electric_dispersive_multipole_A
-from gprMax.fields_updates_ext import update_electric_dispersive_multipole_B
-from gprMax.fields_updates_ext import update_electric_dispersive_1pole_A
-from gprMax.fields_updates_ext import update_electric_dispersive_1pole_B
 from gprMax.yee_cell_build_ext import build_magnetic_components, build_electric_components
 from gprMax.materials import Material
 from gprMax.materials import process_materials
@@ -296,7 +292,6 @@ def solve_scattering(currentmodelrun, modelend, G:FDTDGrid):
         build_electric_components(G.solid, G.rigidE, G.ID, G)
         build_magnetic_components(G.solid, G.rigidH, G.ID, G)
         G.initialise_std_update_coeff_arrays()
-        G.initialise_dispersive_arrays()
         process_materials(G)
         G.empty_sim = False
 
@@ -365,16 +360,7 @@ def solve_cpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
             source.update_magnetic(iteration, G.updatecoeffsH, G.ID, G.Hx, G.Hy, G.Hz, G)
 
         # Update electric field components
-        # All materials are non-dispersive so do standard update
-        if Material.maxpoles == 0:
-            update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
-
-        # If there are any dispersive materials do 1st part of dispersive update
-        # (it is split into two parts as it requires present and updated electric field values).
-        elif Material.maxpoles == 1:
-            update_electric_dispersive_1pole_A(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
-        elif Material.maxpoles > 1:
-            update_electric_dispersive_multipole_A(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsE, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
+        update_electric(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G.Hx, G.Hy, G.Hz)
 
         # Update electric field components with the PML correction
         for pml in G.pmls:
@@ -385,15 +371,6 @@ def solve_cpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
         for source in G.voltagesources + G.transmissionlines + G.hertziandipoles:
             source.update_electric(iteration, G.updatecoeffsE, G.ID, G.Ex, G.Ey, G.Ez, G)
 
-        # If there are any dispersive materials do 2nd part of dispersive update
-        # (it is split into two parts as it requires present and updated electric
-        # field values). Therefore it can only be completely updated after the
-        # electric field has been updated by the PML and source updates.
-        if Material.maxpoles == 1:
-            update_electric_dispersive_1pole_B(G.nx, G.ny, G.nz, G.nthreads, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
-        elif Material.maxpoles > 1:
-            update_electric_dispersive_multipole_B(G.nx, G.ny, G.nz, G.nthreads, Material.maxpoles, G.updatecoeffsdispersive, G.ID, G.Tx, G.Ty, G.Tz, G.Ex, G.Ey, G.Ez)
-        
         for flux in G.fluxes:
             flux.save_fields_fluxes(G, iteration)
 
@@ -426,12 +403,8 @@ def solve_gpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
     # Create device handle and context on specifc GPU device (and make it current context)
     dev = drv.Device(G.gpu.deviceID)
     ctx = dev.make_context()
-
-    # Electric and magnetic field updates - prepare kernels, and get kernel functions
-    if Material.maxpoles > 0:
-        kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=G.updatecoeffsdispersive.shape[1], NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=G.Tx.shape[1], NY_T=G.Tx.shape[2], NZ_T=G.Tx.shape[3]), options=compiler_opts)
-    else:   # Set to one any substitutions for dispersive materials
-        kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=1, NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=1, NY_T=1, NZ_T=1), options=compiler_opts)
+    
+    kernels_fields = SourceModule(kernels_template_fields.substitute(REAL=cudafloattype, COMPLEX=cudacomplextype, N_updatecoeffsE=G.updatecoeffsE.size, N_updatecoeffsH=G.updatecoeffsH.size, NY_MATCOEFFS=G.updatecoeffsE.shape[1], NY_MATDISPCOEFFS=1, NX_FIELDS=G.nx + 1, NY_FIELDS=G.ny + 1, NZ_FIELDS=G.nz + 1, NX_ID=G.ID.shape[1], NY_ID=G.ID.shape[2], NZ_ID=G.ID.shape[3], NX_T=1, NY_T=1, NZ_T=1), options=compiler_opts)
     update_e_gpu = kernels_fields.get_function("update_e")
     update_h_gpu = kernels_fields.get_function("update_h")
 
@@ -443,12 +416,6 @@ def solve_gpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
     else:
         drv.memcpy_htod(updatecoeffsE, G.updatecoeffsE)
         drv.memcpy_htod(updatecoeffsH, G.updatecoeffsH)
-
-    # Electric and magnetic field updates - dispersive materials - get kernel functions and initialise array on GPU
-    if Material.maxpoles > 0:  # If there are any dispersive materials (updates are split into two parts as they require present and updated electric field values).
-        update_e_dispersive_A_gpu = kernels_fields.get_function("update_e_dispersive_A")
-        update_e_dispersive_B_gpu = kernels_fields.get_function("update_e_dispersive_B")
-        G.gpu_initialise_dispersive_arrays()
 
     # Electric and magnetic field updates - set blocks per grid and initialise field arrays on GPU
     G.gpu_set_blocks_per_grid()
@@ -598,16 +565,7 @@ def solve_gpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
                          G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
                          G.Hx_gpu.gpudata, G.Hy_gpu.gpudata, G.Hz_gpu.gpudata,
                          block=G.tpb, grid=G.bpg)
-        # If there are any dispersive materials do 1st part of dispersive update
-        # (it is split into two parts as it requires present and updated electric field values).
-        else:
-            update_e_dispersive_A_gpu(np.int32(G.nx), np.int32(G.ny), np.int32(G.nz),
-                                      np.int32(Material.maxpoles), G.updatecoeffsdispersive_gpu.gpudata,
-                                      G.Tx_gpu.gpudata, G.Ty_gpu.gpudata, G.Tz_gpu.gpudata, G.ID_gpu.gpudata,
-                                      G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
-                                      G.Hx_gpu.gpudata, G.Hy_gpu.gpudata, G.Hz_gpu.gpudata,
-                                      block=G.tpb, grid=G.bpg)
-
+            
         # Update electric field components with the PML correction
         for pml in G.pmls:
             pml.gpu_update_electric(G)
@@ -630,14 +588,6 @@ def solve_gpu_fluxes(currentmodelrun, modelend, G: FDTDGrid):
                                        G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
                                        block=(1, 1, 1), grid=(round32(len(G.hertziandipoles)), 1, 1))
 
-        # If there are any dispersive materials do 2nd part of dispersive update (it is split into two parts as it requires present and updated electric field values). Therefore it can only be completely updated after the electric field has been updated by the PML and source updates.
-        if Material.maxpoles > 0:
-            update_e_dispersive_B_gpu(np.int32(G.nx), np.int32(G.ny), np.int32(G.nz),
-                                      np.int32(Material.maxpoles), G.updatecoeffsdispersive_gpu.gpudata,
-                                      G.Tx_gpu.gpudata, G.Ty_gpu.gpudata, G.Tz_gpu.gpudata, G.ID_gpu.gpudata,
-                                      G.Ex_gpu.gpudata, G.Ey_gpu.gpudata, G.Ez_gpu.gpudata,
-                                      block=G.tpb, grid=G.bpg)
-            
         for i in range(len(G.fluxes)):
             G.fluxes[i].save_fields_fluxes(G, iteration, save_fields_fluxes_gpu[i])
 

@@ -110,14 +110,6 @@ class FDTDGrid(Grid):
         # on the memory of the GPU. If True this will slow performance significantly
         self.snapsgpu2cpu = False
 
-        # Threshold (dB) down from maximum power (0dB) of main frequency used
-        # to calculate highest frequency for numerical dispersion analysis
-        self.highestfreqthres = 40
-        # Maximum allowable percentage physical phase-velocity phase error
-        self.maxnumericaldisp = 2
-        # Minimum grid sampling of smallest wavelength for physical wave propagation
-        self.mingridsampling = 3
-
         self.nx = 0
         self.ny = 0
         self.nz = 0
@@ -141,7 +133,6 @@ class FDTDGrid(Grid):
         self.materials = []
         self.mixingmodels = []
         self.averagevolumeobjects = True
-        self.fractalvolumes = []
         self.geometryviews = []
         self.geometryobjectswrite = []
         self.waveforms = []
@@ -150,8 +141,6 @@ class FDTDGrid(Grid):
         self.magneticdipoles = []
         self.transmissionlines = []
         self.rxs = []
-        self.srcsteps = [0, 0, 0]
-        self.rxsteps = [0, 0, 0]
         self.snapshots = []
         # --- Flux / scattering (energy & cross-section analysis) ---
         # self.fluxes: flat list of all flux surface objects (instances created from input commands).
@@ -212,13 +201,6 @@ class FDTDGrid(Grid):
         """Initialise arrays for storing update coefficients."""
         self.updatecoeffsE = np.zeros((len(self.materials), 5), dtype=floattype)
         self.updatecoeffsH = np.zeros((len(self.materials), 5), dtype=floattype)
-
-    def initialise_dispersive_arrays(self):
-        """Initialise arrays for storing coefficients when there are dispersive materials present."""
-        self.Tx = np.zeros((Material.maxpoles, self.nx + 1, self.ny + 1, self.nz + 1), dtype=complextype)
-        self.Ty = np.zeros((Material.maxpoles, self.nx + 1, self.ny + 1, self.nz + 1), dtype=complextype)
-        self.Tz = np.zeros((Material.maxpoles, self.nx + 1, self.ny + 1, self.nz + 1), dtype=complextype)
-        self.updatecoeffsdispersive = np.zeros((len(self.materials), 3 * Material.maxpoles), dtype=complextype)
 
     def memory_estimate_basic(self):
         """Estimate the amount of memory (RAM) required to run a model."""
@@ -291,140 +273,6 @@ class FDTDGrid(Grid):
         self.Hx_gpu = gpuarray.to_gpu(np.zeros((self.nx + 1, self.ny + 1, self.nz + 1), dtype=floattype))
         self.Hy_gpu = gpuarray.to_gpu(np.zeros((self.nx + 1, self.ny + 1, self.nz + 1), dtype=floattype))
         self.Hz_gpu = gpuarray.to_gpu(np.zeros((self.nx + 1, self.ny + 1, self.nz + 1), dtype=floattype))
-
-    def gpu_initialise_dispersive_arrays(self):
-        """Initialise dispersive material coefficient arrays on GPU."""
-
-        import pycuda.gpuarray as gpuarray
-
-        self.Tx_gpu = gpuarray.to_gpu(self.Tx)
-        self.Ty_gpu = gpuarray.to_gpu(self.Ty)
-        self.Tz_gpu = gpuarray.to_gpu(self.Tz)
-        self.updatecoeffsdispersive_gpu = gpuarray.to_gpu(self.updatecoeffsdispersive)
-
-
-def dispersion_analysis(G):
-    """
-    Analysis of numerical dispersion (Taflove et al, 2005, p112) -
-        worse case of maximum frequency and minimum wavelength
-
-    Args:
-        G (class): Grid class instance - holds essential parameters describing the model.
-
-    Returns:
-        results (dict): Results from dispersion analysis
-    """
-
-    # Physical phase velocity error (percentage); grid sampling density;
-    # material with maximum permittivity; maximum significant frequency; error message
-    results = {'deltavp': False, 'N': False, 'material': False, 'maxfreq': [], 'error': ''}
-
-    # Find maximum significant frequency
-    if G.waveforms:
-        for waveform in G.waveforms:
-            if waveform.type == 'sine' or waveform.type == 'contsine':
-                results['maxfreq'].append(4 * waveform.freq)
-
-            elif waveform.type == 'impulse':
-                results['error'] = 'impulse waveform used.'
-
-            else:
-                # User-defined waveform
-                if waveform.type == 'user':
-                    iterations = G.iterations
-
-                # Built-in waveform
-                else:
-                    # Time to analyse waveform - 4*pulse_width as using entire
-                    # time window can result in demanding FFT
-                    waveform.calculate_coefficients()
-                    iterations = round_value(4 * waveform.chi / G.dt)
-                    if iterations > G.iterations:
-                        iterations = G.iterations
-
-                waveformvalues = np.zeros(G.iterations)
-                for iteration in range(G.iterations):
-                    waveformvalues[iteration] = waveform.calculate_value(iteration * G.dt, G.dt)
-
-                # Ensure source waveform is not being overly truncated before attempting any FFT
-                if np.abs(waveformvalues[-1]) < np.abs(np.amax(waveformvalues)) / 100:
-                    # FFT
-                    freqs, power = fft_power(waveformvalues, G.dt)
-                    # Get frequency for max power
-                    freqmaxpower = np.where(np.isclose(power, 0))[0][0]
-
-                    # Set maximum frequency to a threshold drop from maximum power, ignoring DC value
-                    try:
-                        freqthres = np.where(power[freqmaxpower:] < -G.highestfreqthres)[0][0] + freqmaxpower
-                        results['maxfreq'].append(freqs[freqthres])
-                    except ValueError:
-                        results['error'] = 'unable to calculate maximum power from waveform, most likely due to undersampling.'
-
-                # Ignore case where someone is using a waveform with zero amplitude, i.e. on a receiver
-                elif waveform.amp == 0:
-                    pass
-
-                # If waveform is truncated don't do any further analysis
-                else:
-                    results['error'] = 'waveform does not fit within specified time window and is therefore being truncated.'
-    else:
-        results['error'] = 'no waveform detected.'
-
-    if results['maxfreq']:
-        results['maxfreq'] = max(results['maxfreq'])
-
-        # Find minimum wavelength (material with maximum permittivity)
-        maxer = 0
-        matmaxer = ''
-        for x in G.materials:
-            if x.se != float('inf'):
-                er = x.er
-                # If there are dispersive materials calculate the complex relative permittivity
-                # at maximum frequency and take the real part
-                if x.poles > 0:
-                    er = x.calculate_er(results['maxfreq'])
-                    er = er.real
-                if er > maxer:
-                    maxer = er
-                    matmaxer = x.ID
-        results['material'] = next(x for x in G.materials if x.ID == matmaxer)
-
-        # Minimum velocity
-        minvelocity = c / np.sqrt(maxer)
-
-        # Minimum wavelength
-        minwavelength = minvelocity / results['maxfreq']
-
-        # Maximum spatial step
-        if '3D' in G.mode:
-            delta = max(G.dx, G.dy, G.dz)
-        elif '2D' in G.mode:
-            if G.nx == 1:
-                delta = max(G.dy, G.dz)
-            elif G.ny == 1:
-                delta = max(G.dx, G.dz)
-            elif G.nz == 1:
-                delta = max(G.dx, G.dy)
-
-        # Courant stability factor
-        S = (c * G.dt) / delta
-
-        # Grid sampling density
-        results['N'] = minwavelength / delta
-
-        # Check grid sampling will result in physical wave propagation
-        if int(np.floor(results['N'])) >= G.mingridsampling:
-            # Numerical phase velocity
-            vp = np.pi / (results['N'] * np.arcsin((1 / S) * np.sin((np.pi * S) / results['N'])))
-
-            # Physical phase velocity error (percentage)
-            results['deltavp'] = (((vp * c) - c) / c) * 100
-
-        # Store rounded down value of grid sampling density
-        results['N'] = int(np.floor(results['N']))
-
-    return results
-
 
 def get_other_directions(direction):
     """Return the two other directions from x, y, z given a single direction
