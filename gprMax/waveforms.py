@@ -24,7 +24,7 @@ from gprMax.utilities import round_value
 class Waveform(object):
     """Definitions of waveform shapes that can be used with sources."""
 
-    types = ['gaussian', 'gaussiandot', 'gaussiandotnorm', 'gaussiandotdot', 'gaussiandotdotnorm', 'gaussianprime', 'gaussiandoubleprime', 'ricker', 'sine', 'contsine', 'impulse', 'user']
+    types = ['gaussian_phase','gaussian', 'gaussiandot', 'gaussiandotnorm', 'gaussiandotdot', 'gaussiandotdotnorm', 'gaussianprime', 'gaussiandoubleprime', 'ricker', 'sine', 'contsine', 'impulse', 'user']
 
     # Information about specific waveforms:
     #
@@ -43,6 +43,7 @@ class Waveform(object):
         self.chi = 0
         self.zeta = 0
         self.delay = 0
+        
         self.dfrq = None
 
     def calculate_coefficients(self):
