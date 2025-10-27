@@ -265,7 +265,5 @@ def check_cmd_names(processedlines, checkessential=True):
     if checkessential:
         if (countessentialcmds < len(essentialcmds)):
             raise CmdInputError('Your input file is missing essential commands required to run a model. Essential commands are: ' + ', '.join(essentialcmds))
-        elif (countessentialcmds == 0):
-            raise CmdInputError('Your input file is missing essential commands required to run a model with cylindrical symmetry. Essential commands are: ' + ', '.join(essentialcmds_cyl))
 
     return singlecmds, multiplecmds, scattering_geometrycmds, geometry, scatteringgeometry
