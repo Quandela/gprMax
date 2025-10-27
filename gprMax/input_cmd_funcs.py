@@ -532,44 +532,6 @@ def hertzian_dipole(polarisation, f1, f2, f3, identifier,
 
     return c
 
-
-def magnetic_dipole(polarisation, f1, f2, f3, identifier,
-                    t0=None, t_remove=None, dxdy=None, rotate90origin=()):
-    """Prints the #magnetic_dipole: polarisation, f1, f2, f3, identifier, [t0, t_remove]
-
-    Args:
-        polarisation (str):  is the polarisation of the source and can be 'x', 'y', or 'z'.
-        f1 f2 f3 (float): are the coordinates (x,y,z) of the source in the model.
-        identifier (str): is the identifier of the waveform that should be used with the source.
-        t0 (float): is an optinal argument for the time delay in starting the source.
-        t_remove (float): is a time to remove the source.
-        dxdy (float): Tuple of x-y spatial resolutions. For rotation purposes only.
-        rotate90origin (tuple): x, y origin for 90 degree CCW rotation in x-y plane.
-
-    Returns:
-        coordinates (tuple): namedtuple Coordinate of the source location
-    """
-
-    if rotate90origin:
-        if polarisation == 'x':
-            xf = f1 + dxdy[0]
-            yf = f2
-            newpolarisation = 'y'
-        elif polarisation == 'y':
-            xf = f1
-            yf = f2 + dxdy[1]
-            newpolarisation = 'x'
-
-        f1, f2, xf, yf = rotate90_edge(f1, f2, xf, yf, polarisation, rotate90origin)
-        polarisation = newpolarisation
-
-    c = Coordinate(f1, f2, f3)
-    # since command ignores None, this is safe:
-    command('magnetic_dipole', polarisation, str(c), identifier, t0, t_remove)
-
-    return c
-
-
 def voltage_source(polarisation, f1, f2, f3, resistance, identifier,
                    t0=None, t_remove=None, dxdy=None, rotate90origin=()):
     """Prints the #voltage_source: polarisation, f1, f2, f3, resistance, identifier, [t0, t_remove]
@@ -606,45 +568,6 @@ def voltage_source(polarisation, f1, f2, f3, resistance, identifier,
     command('voltage_source', polarisation, str(c), resistance, identifier, t0, t_remove)
 
     return c
-
-
-def transmission_line(polarisation, f1, f2, f3, resistance, identifier,
-                      t0=None, t_remove=None, dxdy=None, rotate90origin=()):
-    """Prints the #transmission_line: polarisation, f1, f2, f3, resistance, identifier, [t0, t_remove]
-
-    Args:
-        polarisation (str):  is the polarisation of the source and can be 'x', 'y', or 'z'.
-        f1 f2 f3 (float): are the coordinates (x,y,z) of the source in the model.
-        identifier (str): is the identifier of the waveform that should be used with the source.
-        resistance (float): is the characteristic resistance of the transmission_line.
-        t0 (float): is an optinal argument for the time delay in starting the source.
-        t_remove (float): is a time to remove the source.
-        dxdy (float): Tuple of x-y spatial resolutions. For rotation purposes only.
-        rotate90origin (tuple): x, y origin for 90 degree CCW rotation in x-y plane.
-
-    Returns:
-        coordinates (tuple): namedtuple Coordinate of the source location
-    """
-
-    if rotate90origin:
-        if polarisation == 'x':
-            xf = f1 + dxdy[0]
-            yf = f2
-            newpolarisation = 'y'
-        elif polarisation == 'y':
-            xf = f1
-            yf = f2 + dxdy[1]
-            newpolarisation = 'x'
-
-        f1, f2, xf, yf = rotate90_edge(f1, f2, xf, yf, polarisation, rotate90origin)
-        polarisation = newpolarisation
-
-    c = Coordinate(f1, f2, f3)
-    # since command ignores None, this is safe:
-    command('transmission_line', polarisation, str(c), resistance, identifier, t0, t_remove)
-
-    return c
-
 
 def rx(x, y, z, identifier=None, to_save=None, polarisation=None, dxdy=None, rotate90origin=()):
     """Prints the #rx: x, y, z, [identifier, to_save] command.
@@ -688,38 +611,6 @@ def rx(x, y, z, identifier=None, to_save=None, polarisation=None, dxdy=None, rot
 
     command('rx', str(c), identifier, to_save_str)
 
-    return c
-
-
-def src_steps(dx=0, dy=0, dz=0):
-    """Prints the #src_steps: dx, dy, dz command.
-
-    Args:
-        dx, dy, dz (float): are the increments in (x, y, z) to
-            move all simple sources or all receivers.
-
-    Returns:
-        coordinates (tuple): namedtuple Coordinate of the increments
-    """
-
-    c = Coordinate(dx, dy, dz)
-    command('src_steps', str(c))
-
-    return c
-
-
-def rx_steps(dx=0, dy=0, dz=0):
-    """Prints the #rx_steps: dx, dy, dz command.
-
-    Args:
-        dx, dy, dz (float): are the increments in (x, y, z) to move all simple sources or all receivers.
-
-    Returns:
-        coordinates (tuple): namedtuple Coordinate of the increments
-    """
-
-    c = Coordinate(dx, dy, dz)
-    command('rx_steps', str(c))
     return c
 
 def geometry_objects_read(x, y, z, file1, file2):

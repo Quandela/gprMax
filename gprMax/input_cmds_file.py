@@ -196,13 +196,13 @@ def check_cmd_names(processedlines, checkessential=True):
                                 ], None)
 
     # Commands that there can be multiple instances of in a model - these will be lists within the dictionary
-    multiplecmds = {key: [] for key in ['#geometry_view', '#geometry_objects_write', '#material', '#waveform', '#voltage_source', '#hertzian_dipole', '#magnetic_dipole', '#transmission_line', '#rx', '#rx_array', '#snapshot', '#pml_cfs', '#include_file'
+    multiplecmds = {key: [] for key in ['#geometry_view', '#geometry_objects_write', '#material', '#waveform', '#voltage_source', '#hertzian_dipole','#rx', '#snapshot', '#pml_cfs', '#include_file'
                                         , '#flux', '#box_flux', '#plane_voltage_source']}
 
 
     # Geometry object building commands that there can be multiple instances
     # of in a model - these will be lists within the dictionary
-    geometrycmds = ['#geometry_objects_read', '#edge', '#plate', '#triangle', '#box', '#sphere', '#cylinder', '#cylindrical_sector']
+    geometrycmds = ['#geometry_objects_read', '#edge', '#plate', '#box', '#sphere', '#cylinder', '#cylindrical_sector']
 
     scatteringcmds = ["#scattering", "#scattering_end"]
 

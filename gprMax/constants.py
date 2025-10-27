@@ -21,6 +21,11 @@ from scipy.constants import c
 from scipy.constants import mu_0 as m0
 from scipy.constants import epsilon_0 as e0
 
+#Atomic units
+# c = 1
+# m0 = 1
+# e0 = 1
+
 # Impedance of free space (Ohms)
 z0 = np.sqrt(m0 / e0)
 

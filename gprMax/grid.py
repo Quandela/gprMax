@@ -138,8 +138,6 @@ class FDTDGrid(Grid):
         self.waveforms = []
         self.voltagesources = []
         self.hertziandipoles = []
-        self.magneticdipoles = []
-        self.transmissionlines = []
         self.rxs = []
         self.snapshots = []
         # --- Flux / scattering (energy & cross-section analysis) ---
