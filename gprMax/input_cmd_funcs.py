@@ -339,33 +339,6 @@ def plate(xs, ys, zs, xf, yf, zf, material, rotate90origin=()):
     return s, f
 
 
-def triangle(x1, y1, z1, x2, y2, z2, x3, y3, z3, thickness, material, averaging='', rotate90origin=()):
-    """Prints the gprMax #triangle command.
-
-    Args:
-        x1, y1, z1, x2, y2, z2, x3, y3, z3 (float): Coordinates of the vertices.
-        thickness (float): Thickness for a triangular prism, or zero for a triangular patch.
-        material (str): Material identifier(s).
-        averaging (str): Turn averaging on or off.
-        rotate90origin (tuple): x, y origin for 90 degree CCW rotation in x-y plane.
-
-    Returns:
-        v1, v2, v3 (tuple): 3 namedtuple Coordinate for the vertices
-    """
-
-    if rotate90origin:
-        x1, y1 = rotate90_point(x1, y1, rotate90origin)
-        x2, y2 = rotate90_point(x2, y2, rotate90origin)
-        x3, y3 = rotate90_point(x3, y3, rotate90origin)
-
-    v1 = Coordinate(x1, y1, z1)
-    v2 = Coordinate(x2, y2, z2)
-    v3 = Coordinate(x3, y3, z3)
-    command('triangle', v1, v2, v3, thickness, material, averaging)
-
-    return v1, v2, v3
-
-
 def box(xs, ys, zs, xf, yf, zf, material, averaging='', rotate90origin=()):
     """Prints the gprMax #box command.
 
